@@ -12,6 +12,10 @@ host=${SWR%%/*}                       # swr.pk-isb-1.sky47.com
 region=${host#swr.}; region=${region%%.*}   # pk-isb-1
 [[ -n ${AK:-} ]] || read -rp "Access Key Id: " AK
 [[ -n ${SK:-} ]] || { read -rsp "Secret Access Key: " SK; echo; }
-printf '%s' "$AK" | openssl dgst -binary -sha256 -hmac "$SK" | od -An -vtx1 | tr -d ' \n' \
-  | $DOCKER login -u "$region@$AK" --password-stdin "$host"
+SWR_USER="$region@$AK"
+SWR_PASS=$(printf '%s' "$AK" | openssl dgst -binary -sha256 -hmac "$SK" | od -An -vtx1 | tr -d ' \n')
+printf '%s' "$SWR_PASS" | $DOCKER login -u "$SWR_USER" --password-stdin "$host"
 unset SK
+# Sourced (". scripts/swr-login.sh") it also leaves SWR_USER/SWR_PASS set for the
+# registry-copy fallback in mirror-images.sh. Unset them when done.
+export SWR_USER SWR_PASS
