@@ -218,22 +218,6 @@ apisix:
     - ai-request-rewrite
     - opentelemetry
 
-  pluginAttrs:
-    opentelemetry:
-      trace_id_source: random           # X-Request-Id is a UUID, not a valid trace id
-      resource:
-        service.name: apisix
-      collector:
-        address: tempo.observability.svc:4318
-        request_timeout: 3
-        request_headers: {}
-      batch_span_processor:
-        drop_on_queue_full: true        # never let a slow/absent Tempo hold requests
-        max_queue_size: 2048
-        batch_timeout: 2
-        inactive_timeout: 1
-        max_export_batch_size: 64
-      set_ngx_var: true                 # exposes $opentelemetry_trace_id to the access log
 
 # --- ingress controller (subchart, controller 2.2.0) ------------------------
 ingress-controller:
@@ -267,6 +251,24 @@ ingress-controller:
     enabled: false
   gatewayProxy:
     createDefault: true
+    # OpenTelemetry collector settings. In APISIX 3.18 these are plugin *metadata*
+    # (pushed by the controller), not static plugin_attr. Without them the plugin
+    # only logs "plugin_metadata is required" and traces nothing.
+    pluginMetadata:
+      opentelemetry:
+        trace_id_source: random           # X-Request-Id is a UUID, not a valid trace id
+        resource:
+          service.name: apisix
+        collector:
+          address: tempo.observability.svc:4318
+          request_timeout: 3
+        batch_span_processor:
+          drop_on_queue_full: true        # never let a slow/absent Tempo hold requests
+          max_queue_size: 2048
+          batch_timeout: 2
+          inactive_timeout: 1
+          max_export_batch_size: 64
+        set_ngx_var: true                 # exposes $opentelemetry_trace_id to the access log
     provider:
       type: ControlPlane
       controlPlane:
