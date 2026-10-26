@@ -1,0 +1,89 @@
+# prometheus-community/prometheus 29.36.1: server only. The CCE monitoring
+# add-on already runs node-exporter and kube-state-metrics (ns monitoring);
+# they are scraped, not duplicated. Metrics backend for Grafana, and the
+# remote-write target for Tempo's span metrics / service graph.
+imagePullSecrets:
+  - name: default-secret
+
+alertmanager:
+  enabled: false
+kube-state-metrics:
+  enabled: false
+prometheus-node-exporter:
+  enabled: false
+prometheus-pushgateway:
+  enabled: false
+
+configmapReload:
+  prometheus:
+    image:
+      repository: swr.pk-isb-1.sky47.com/pk-beta-repo/prometheus-config-reloader
+      tag: v0.94.1
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {cpu: 50m, memory: 64Mi}
+
+server:
+  image:
+    repository: swr.pk-isb-1.sky47.com/pk-beta-repo/prometheus
+    tag: v3.15.0
+  priorityClassName: observability-low
+  retention: 7d
+  retentionSize: 8GB
+  extraFlags:
+    - web.enable-lifecycle
+    - web.enable-remote-write-receiver   # Tempo metrics-generator pushes here
+  global:
+    scrape_interval: 30s
+    evaluation_interval: 30s
+  persistentVolume:
+    enabled: true
+    size: 10Gi
+    storageClass: csi-disk-topology
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1536Mi}
+  service:
+    type: ClusterIP
+
+# Only these jobs. The chart's generic ones are switched off.
+scrapeConfigs:
+  kubernetes-api-servers: {enabled: false}
+  kubernetes-nodes: {enabled: false}
+  kubernetes-service-endpoints: {enabled: false}
+  kubernetes-service-endpoints-slow: {enabled: false}
+  prometheus-pushgateway: {enabled: false}
+  kubernetes-services: {enabled: false}
+  kubernetes-pods: {enabled: false}
+  kubernetes-pods-slow: {enabled: false}
+  # prometheus (self) and kubernetes-nodes-cadvisor (container CPU/memory) stay on.
+
+  apisix:
+    metrics_path: /apisix/prometheus/metrics
+    kubernetes_sd_configs:
+      - role: endpointslice
+        namespaces: {names: [apisix]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        regex: apisix-prometheus-metrics
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+  node-exporter:
+    kubernetes_sd_configs:
+      - role: endpointslice
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        regex: node-exporter
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
+  kube-state-metrics:
+    kubernetes_sd_configs:
+      - role: endpointslice
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        regex: kube-state-metrics-prom
+        action: keep

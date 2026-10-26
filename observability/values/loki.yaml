@@ -1,0 +1,81 @@
+# grafana-community/loki 18.15.1: single binary on the local filesystem (EVS).
+# 7-day retention by the compactor. For production use OBS (S3-compatible):
+# see observability/README.md.
+deploymentMode: Monolithic
+imagePullSecrets:
+  - name: default-secret
+
+loki:
+  image:
+    registry: swr.pk-isb-1.sky47.com
+    repository: pk-beta-repo/loki
+    tag: 3.7.8
+  auth_enabled: false           # ClusterIP only; single tenant
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2026-10-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    retention_period: 168h
+    reject_old_samples: true
+    reject_old_samples_max_age: 168h
+    ingestion_rate_mb: 8
+    ingestion_burst_size_mb: 16
+    max_label_names_per_series: 15
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+    working_directory: /var/loki/compactor
+  analytics:
+    reporting_enabled: false
+
+singleBinary:
+  replicas: 1
+  priorityClassName: observability-low
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1536Mi}
+  extraEnv:
+    - name: GOMEMLIMIT
+      value: 1300MiB
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: csi-disk-topology
+
+# Everything a single binary doesn't need
+gateway: {enabled: false}
+chunksCache: {enabled: false}
+resultsCache: {enabled: false}
+lokiCanary: {enabled: false}
+test: {enabled: false}
+minio: {enabled: false}
+backend: {replicas: 0}
+read: {replicas: 0}
+write: {replicas: 0}
+ingester: {replicas: 0}
+querier: {replicas: 0}
+queryFrontend: {replicas: 0}
+queryScheduler: {replicas: 0}
+distributor: {replicas: 0}
+compactor: {replicas: 0}
+indexGateway: {replicas: 0}
+bloomGateway: {replicas: 0}
+bloomPlanner: {replicas: 0}
+bloomBuilder: {replicas: 0}
+patternIngester: {replicas: 0}
+ruler: {enabled: false, replicas: 0}
+overridesExporter: {enabled: false, replicas: 0}
+# Rules sidecar (pulls from docker.io, no limits) is only for the ruler, which is off
+sidecar:
+  rules:
+    enabled: false

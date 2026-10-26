@@ -1,0 +1,14 @@
+# Hard ceiling for the whole stack so it can never starve the single node.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: observability
+  namespace: observability
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 7Gi
+    requests.storage: 50Gi
+    persistentvolumeclaims: "6"
