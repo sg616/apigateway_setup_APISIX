@@ -1,0 +1,58 @@
+# Deployment log: pk-beta-test-cluster
+
+APISIX API gateway in front of the sample app, serving **https://beta-test.paykoko.pk**. Live since **2026-10-26 09:30 UTC**.
+
+| | |
+|---|---|
+| Cluster | `pk-beta-test-cluster`, CCE k8s v1.31.6 (HCS), 1 node `10.10.1.156` (amd64, 16 vCPU, 30 GB) |
+| ELB | shared ELB `a168acbd-ad28-4c82-a57d-7229be2b7da8`, EIP 138.252.175.35, private 10.10.1.229, cert `fb0464e7b74948d6a3223f05eafbd311` (`*.paykoko.pk`) |
+| Networks | VPC 10.10.0.0/16 (nodes), containers 172.16.0.0/16 |
+| Admin host | `ecs-c9d3-beta-1` (Jenkins VM, 10.10.1.250, egress IP 138.252.175.13) |
+| Versions | chart `apisix` 2.17.1, APISIX 3.18.0-ubuntu, ingress controller 2.2.0, adc 0.27.1 (mirrored to `swr.pk-isb-1.sky47.com/pk-beta-repo/`) |
+| Repo state | this repo `feat/apisix-gateway-cce` @ `2950ddc` (deploy), app repo `feature/apisix-gateway` @ `ece6d71` |
+
+## Starting state
+- The app ran in `sample-app` with images `main-aa54b9a-3` (deployed by Jenkins). The repo manifests had older tags, so rollback must never re-apply the Deployments.
+- Public 443 went to the `frontend` LoadBalancer Service (nginx), which proxied `/api/` and `/orders-api/`.
+- Baseline through nginx: `/`, `/api/health`, `/orders-api/health` all 200.
+- CCE monitoring add-on present: prometheus-operator plus `prometheus-lightweight` (agent, remote-write to AOM), selecting every ServiceMonitor.
+- No metrics API (`kubectl top` fails), and no canal/yangtse DaemonSet.
+
+## Steps (UTC)
+1. Repo config: `PUBLIC_URL`, `realIpFrom` = 127.0.0.1, 10.10.0.0/16, 172.16.0.0/16, ServiceMonitor on, NetworkPolicy allows monitoring → 9091 (commit `36e68d5`).
+2. **09:13–09:22, images.** The jenkins user had no SWR login (the first push failed with `You may not login yet`).
+   Logged in with a long-term login derived from an IAM AK/SK (now `scripts/swr-login.sh`), ran `mirror-images.sh` as jenkins, then `docker logout`.
+3. Namespace `apisix`, Secret `apisix-admin` (random keys, created in-cluster only). CCE had already auto-created `default-secret` in the new namespace.
+4. **09:23 install.** `install.sh` succeeded in about 40s. The controller logged adc.sock errors in the first second (sidecar starting), then none.
+5. In-cluster tests: all 4 paths 200 with `X-Request-Id`. **Admin API 9180 reachable from `sample-app`, so NetworkPolicy is not enforced.**
+6. **09:25 test listener 8443.** Ready in about 25s on EIP .35.
+
+   | Test | Result |
+   |---|---|
+   | smoke | 4/4 |
+   | real client IP | `client_ip` = 138.252.175.13 (the test host) |
+   | rate limit | 700 requests: no 429, because the limit is per pod (600 × 2). 1600 requests: 498 × 200 / 1102 × 429. Orders route unaffected (own counter) |
+   | load, `/`, 2000 requests at 20 parallel, one APISIX pod deleted | **2000/2000 200**, replacement Ready in ~15s |
+   | latency, public, back-to-back | 443 nginx p50 64–65 / p95 83–131 ms. 8443 APISIX p50 64–65 / p95 83–86 ms |
+   | latency, in-cluster | APISIX 1.4 ms vs nginx 0.8 ms (p50) |
+   | metrics | both pods `up` in prometheus-lightweight targets |
+
+7. **09:30:09 cut-over** (`cutover.sh`). Deleted `apisix-gateway-lb` (8443) and `frontend`, then applied `gateway-lb.yaml`. `/api/health` was 200 at 09:30:59, so the outage was **about 50s**.
+   One smoke check (`/some/spa/route`) got a **502 from the ELB** while the listener was still being set up. The APISIX log had no 502, and retests were all 200.
+   `cutover.sh` now retries the smoke test.
+8. 09:32: final smoke test 4/4 on 443. `X-Request-Id` present, and APISIX logs show the correct upstream pods.
+9. Backup of the old Service: `backup/frontend-svc-20261026-093009.yaml` (local, gitignored). The same Service is in git as `k8s/frontend-lb-rollback.yaml`.
+
+## Findings
+- **NetworkPolicy is not enforced on this cluster.** The Admin API is protected only by its key. The policies are applied anyway.
+- **The HPA can't scale** (no metrics API): it reads `cpu: <unknown>` and stays at 2 pods. That's fine for beta. Enable a CCE metrics add-on if autoscaling is needed.
+- The ELB rewrites `Server` to `elb`. Use `X-Request-Id` to tell whether a response came through APISIX.
+- The Service status lists 138.252.175.13 as well as .35. .13 is the Jenkins VM's egress IP, which serves Jenkins. Not an issue.
+- CCE rejects a second Service on the same ELB port: a server dry-run of the old `frontend` LB Service failed with `protocol_port 443 … already has been usesd by other service`. So the old app manifest can't take 443 back by accident. It fails instead.
+- The APISIX image has no `curl`. Run in-cluster tests from the app pods instead (read-only, no files written).
+
+## Open items
+- [ ] LTS ingestion namespace regex → `^(sample-app|apisix)$` (console)
+- [ ] Revoke the cluster-admin kubeconfig used for the install (valid until 2031-10-26), and delete/rotate the IAM AK/SK used for the SWR login
+- [ ] Merge this repo's `feat/apisix-gateway-cce` and the app repo's `feature/apisix-gateway`. Then `git pull` in the root-owned checkout `/home/ubuntu/beta-pk/sample-project-sky-47-deploy-test`. Until then, applying that checkout's `k8s/frontend.yaml` fails on its Service (443 taken), so use the new branch
+- [ ] Hardening after a stable week (README step 9)

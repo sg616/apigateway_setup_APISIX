@@ -74,7 +74,7 @@ apisix:
   admin:
     enabled: true
     type: ClusterIP
-    # Key comes from Secret apisix-admin (k8s/admin-secret.example.yaml), never from git
+    # Key comes from Secret apisix-admin (scripts/create-secrets.sh), never from git
     credentials:
       secretName: apisix-admin
       secretAdminKey: admin-key
