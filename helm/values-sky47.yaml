@@ -42,6 +42,13 @@ resources:
     memory: 512Mi
 timezone: Asia/Karachi
 
+# CCE monitoring (prometheus-operator in ns monitoring) selects every
+# ServiceMonitor and remote-writes to AOM, so this puts apisix_* metrics in AOM.
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+
 # --- services ---------------------------------------------------------------
 # Chart Service stays internal. The ELB-facing Service lives in k8s/gateway-lb*.yaml
 # so the cut-over never needs a helm upgrade.
@@ -80,13 +87,14 @@ apisix:
 
   nginx:
     http:
-      # ELB (HTTPS listener) adds X-Forwarded-For. Trust the VPC range only.
-      # TODO: confirm VPC CIDR in the sky47 console (RDS is 10.10.1.20).
+      # ELB (HTTPS listener) adds X-Forwarded-For. Trust only the VPC (nodes,
+      # ELB private IP 10.10.1.229) and the container CIDR (kube-proxy SNAT).
       realIpHeader: X-Forwarded-For
       realIpRecursive: "on"
       realIpFrom:
         - 127.0.0.1
-        - 10.0.0.0/8
+        - 10.10.0.0/16
+        - 172.16.0.0/16
     logs:
       accessLog: /dev/stdout
       accessLogFormatEscape: json
