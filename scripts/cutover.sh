@@ -28,10 +28,14 @@ sleep 15   # give CCE time to remove the 443 listener
 log "step 2: gateway takes 443"
 kubectl apply -f "$ROOT/k8s/gateway-lb.yaml"
 
-if wait_http_200 "$PUBLIC_URL/api/health" 240 && "$ROOT/scripts/smoke-test.sh" "$PUBLIC_URL"; then
+# The ELB can answer 502 for a few seconds while CCE finishes the listener,
+# so give the smoke test a few tries before calling it a failure.
+smoke_retry() { local i; for i in 1 2 3 4 5 6; do "$ROOT/scripts/smoke-test.sh" "$PUBLIC_URL" && return 0; sleep 10; done; return 1; }
+
+if wait_http_200 "$PUBLIC_URL/api/health" 240 && smoke_retry; then
   log "CUT-OVER DONE."
-  log "NOW: update sample-project k8s/frontend.yaml (drop the LoadBalancer Service) or a"
-  log "     future 'kubectl apply -f k8s/' will fight the gateway for listener 443."
+  log "Use the app repo's k8s/frontend.yaml without a LoadBalancer Service"
+  log "(branch feature/apisix-gateway); the old one now fails to apply (443 taken)."
 else
   log "smoke test failed -> run scripts/rollback.sh"
   exit 1

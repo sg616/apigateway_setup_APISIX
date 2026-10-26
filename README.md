@@ -1,27 +1,29 @@
 # APISIX API Gateway on sky47 CCE
 
 sky47 has no managed API Gateway, so we run Apache APISIX in the CCE cluster.
+This repo is everything needed to set it up again on a new cluster by hand. Deployment records are in [`docs/deployments/`](docs/deployments/).
 
 ```
-Before:  Browser → ELB :443 → frontend Service (LB) → nginx ─┬─ /api/*        → backend:8080
-                                                              └─ /orders-api/* → orders-backend:8080
-After:   Browser → ELB :443 → apisix-gateway-lb → APISIX ─┬─ /api/*        → backend:8080
-                                                          ├─ /orders-api/* → orders-backend:8080
-                                                          └─ /*            → frontend-internal:80 (SPA)
+Browser → ELB :443 (TLS) → apisix-gateway-lb (ns apisix) → APISIX ─┬─ /api/*        → backend:8080
+                                                                    ├─ /orders-api/* → orders-backend:8080
+                                                                    └─ /*            → frontend-internal:80 (SPA)
 ```
 
-TLS still terminates at the ELB (same cert). ELB → APISIX → pods is plain HTTP inside the VPC.
+TLS terminates at the ELB. ELB → APISIX → pods is plain HTTP inside the VPC.
+The app (Deployments + backend Services) comes from the app repo [sample-project-sky-47-deploy-test](https://github.com/sg616/sample-project-sky-47-deploy-test).
+Its `k8s/frontend.yaml` has **no** LoadBalancer Service (branch `feature/apisix-gateway`), because the ELB belongs to this repo.
 
 ## Design
 
 | Choice | Why |
 |---|---|
 | Helm chart `apisix` 2.17.1 (APISIX 3.18.0, ingress controller 2.2.0), pinned in `config.env` | Reproducible installs |
-| **etcd-less**: APISIX `config_provider: yaml`, controller provider `apisix-standalone` | The cluster is small. Running 3 etcd pods would cost resources and add a backup job, without giving real HA |
+| **etcd-less**: APISIX `config_provider: yaml`, controller provider `apisix-standalone` | Small clusters. 3 etcd pods would cost resources and add a backup job, without giving real HA |
 | Routes as `ApisixRoute` CRDs in `routes/` | Changes go through git review, and the controller keeps the cluster in sync with what's committed |
 | ELB Service kept outside Helm (`k8s/gateway-lb*.yaml`) | Cut-over and rollback never need a `helm upgrade` |
-| Admin key in Secret `apisix-admin`, Admin API ClusterIP only | The key isn't in git and the Admin API isn't on the ELB |
+| Admin key in Secret `apisix-admin` (random, created in-cluster), Admin API ClusterIP only | The key is never in git or on disk, and the Admin API isn't on the ELB |
 | 2–4 replicas (HPA), PDB `minAvailable: 1`, soft anti-affinity | The gateway shouldn't be a single pod that everything depends on |
+| JSON access log on stdout, ServiceMonitor | Logs go to LTS through ICAgent, metrics to AOM through the CCE Prometheus agent |
 
 **About etcd-less mode:** each APISIX pod keeps its config in memory, and the controller pushes the full config every `syncPeriod` (10s).
 A new or restarted pod stays NotReady until its first push arrives. That is expected, and readiness on `/status/ready` keeps it out of the ELB until then.
@@ -30,111 +32,161 @@ Making a change in the Admin API by hand is pointless: the next sync overwrites 
 ## Layout
 
 ```
-config.env                   versions, names, PUBLIC_URL
-helm/values-sky47.yaml       chart values
-routes/sample-app.yaml       ApisixRoute + ApisixGlobalRule (request-id, prometheus)
+config.env                         versions, names, SWR path, PUBLIC_URL
+helm/values-sky47.yaml             chart values
+routes/sample-app.yaml             ApisixRoute (3 routes, rate limit) + ApisixGlobalRule (request-id, prometheus)
 k8s/namespace.yaml
-k8s/admin-secret.example.yaml   copy to admin-secret.yaml (gitignored)
-k8s/frontend-internal.yaml      ClusterIP for the SPA (target of the /* route)
-k8s/gateway-lb-test.yaml        gateway on ELB HTTPS 8443 (testing)
-k8s/gateway-lb.yaml             gateway on ELB HTTPS 443 (production)
-k8s/networkpolicy-apisix.yaml   Admin API only from inside the apisix namespace
+k8s/frontend-internal.yaml         ClusterIP for the SPA (target of the /* route)
+k8s/gateway-lb-test.yaml           gateway on ELB HTTPS 8443 (testing)
+k8s/gateway-lb.yaml                gateway on ELB HTTPS 443 (production)
+k8s/frontend-lb-rollback.yaml      pre-gateway frontend LoadBalancer Service (rollback only)
+k8s/networkpolicy-apisix.yaml      Admin API only from inside the apisix namespace
 k8s/networkpolicy-sample-app.yaml  backends only from gateway/frontend (hardening step)
-scripts/mirror-images.sh  install.sh  smoke-test.sh  cutover.sh  rollback.sh
+scripts/preflight.sh               read-only checks; prints the values a new cluster needs
+scripts/swr-login.sh               long-term SWR login from AK/SK (password on stdin)
+scripts/mirror-images.sh           Docker Hub / ghcr -> SWR
+scripts/create-secrets.sh          namespace + admin key + pull secret (idempotent)
+scripts/install.sh                 helm upgrade --install --atomic, routes, policies
+scripts/smoke-test.sh              4 HTTP checks through the gateway
+scripts/cutover.sh / rollback.sh   move public 443 to APISIX / back to nginx
+docs/deployments/                  one record per environment
 ```
 
-## Rollout
+## Values per environment
 
-Run everything with the **cluster-admin (console) kubeconfig**. Installing creates CRDs and ClusterRoles, which `jenkins-deployer` is not allowed to do, and it shouldn't be.
+For a new cluster or ELB, change these and nothing else. `scripts/preflight.sh` prints the live values to compare against.
 
-### 0. Prerequisites
-1. Install `helm` v3 (and optionally the `helm-diff` plugin) on the admin host.
-2. Set `PUBLIC_URL` in `config.env`.
-3. Confirm the VPC CIDR and narrow `realIpFrom` in `helm/values-sky47.yaml` if it is narrower than `10.0.0.0/8`.
-4. Check the cluster's **network model** (CCE → cluster → Overview). NetworkPolicy works only with the *container tunnel* model. On *VPC network* clusters the policies are accepted but silently do nothing (this is the case on the beta cluster, see Deployed state).
-5. **LTS**: edit the CCE ingestion config and change the namespace regex from `^sample-app$` to `^(sample-app|apisix)$`, or the gateway logs never reach LTS.
+| What | File → key | Where to find it |
+|---|---|---|
+| Public URL | `config.env` → `PUBLIC_URL` | The domain on the ELB certificate |
+| SWR registry/org | `config.env` → `SWR`, and `helm/values-sky47.yaml` → every `repository:` | SWR console → Organizations |
+| App namespace | `config.env` → `APP_NAMESPACE`, and `routes/*.yaml`, `k8s/frontend-internal.yaml`, `k8s/frontend-lb-rollback.yaml` → `namespace:` | Where the app runs |
+| ELB ID | `k8s/gateway-lb.yaml`, `gateway-lb-test.yaml`, `frontend-lb-rollback.yaml` → `kubernetes.io/elb.id` | ELB console → your load balancer → ID |
+| Certificate ID | same 3 files → `kubernetes.io/elb.cert-id` | ELB console → Certificates |
+| Trusted proxy ranges | `helm/values-sky47.yaml` → `apisix.nginx.http.realIpFrom` | preflight prints the VPC (node) and container (pod) ranges |
+| ServiceMonitor | `helm/values-sky47.yaml` → `metrics.serviceMonitor.enabled` | `true` only if preflight finds the ServiceMonitor CRD |
+| Rate limit | `routes/*.yaml` → `limit-count` (`count`, `time_window`) | Per IP **per APISIX pod**: effective limit = count × replicas |
+| Timezone | `helm/values-sky47.yaml` → `timezone` | |
 
-### 1. Mirror images to SWR
+## New setup (manual)
+
+Everything runs from an admin host in the VPC (for example the Jenkins VM) with:
+- the **cluster-admin kubeconfig**, because install creates CRDs and ClusterRoles. Jenkins' namespace-scoped `jenkins-deployer` can't do this, and shouldn't.
+- `kubectl`, `helm` v3, `docker`, `curl`, `openssl`, `python3`. Helm doesn't need root: any copy in your `PATH` works.
+
+### 0. Before you start
+1. The app is deployed from the app repo (branch `feature/apisix-gateway` or later): `backend`, `orders-backend` and `frontend` Deployments, plus the `backend` and `orders-backend` Services. Use its `K8S-DEPLOYMENT.md` up to step 7.
+2. **LTS**: in the CCE ingestion config, set the namespace regex to `^(sample-app|apisix)$`. Otherwise the gateway logs never reach LTS.
+3. Point kubectl at the cluster: `export KUBECONFIG=/path/to/cluster-admin-kubeconfig.json`
+
+### 1. Configure and check
+Edit the files in [Values per environment](#values-per-environment), then:
 ```bash
-docker login swr.pk-isb-1.sky47.com ...      # see sample project K8S-DEPLOYMENT.md §3
-scripts/mirror-images.sh
+scripts/preflight.sh       # changes nothing; every line should be [ok], or a WARN you understand
+```
+Read the WARNs, in particular:
+- **NetworkPolicy probably NOT enforced**: then the Admin API is reachable from every pod and only its key protects it.
+- **No metrics API**: then the HPA can't scale and stays at 2 pods.
+
+### 2. Mirror images to SWR
+```bash
+scripts/swr-login.sh       # asks for the IAM Access Key Id / Secret Access Key (or set AK / SK env)
+scripts/mirror-images.sh   # pulls the pinned images and pushes them to $SWR
+docker logout ${SWR%%/*}   # don't leave a long-term login on the host
+```
+- Docker needs root or the `docker` group. To use another user's Docker, prefix both scripts: `DOCKER="sudo -u jenkins -H docker" scripts/...`
+- You can use the console's temporary login command (**SWR → Generate Login Command**) instead of `swr-login.sh`.
+- The images are pushed for the host's platform only (amd64), so preflight warns if the nodes are a different architecture.
+
+### 3. Namespace and secrets
+```bash
+scripts/create-secrets.sh  # namespace apisix, random admin/viewer keys, SWR pull secret (never overwrites)
 ```
 
-### 2. Namespace, secrets
+### 4. Install
 ```bash
-kubectl apply -f k8s/namespace.yaml
-cp k8s/admin-secret.example.yaml k8s/admin-secret.yaml   # fill with: openssl rand -hex 32 (x2)
-kubectl apply -f k8s/admin-secret.yaml
-# imagePullSecret for SWR: copy default-secret from sample-app
-kubectl -n sample-app get secret default-secret -o yaml \
-  | sed -e 's/namespace: sample-app/namespace: apisix/' -e '/resourceVersion\|uid\|creationTimestamp/d' \
-  | kubectl apply -f -
-```
-
-### 3. Install
-```bash
-scripts/install.sh            # helm upgrade --install --atomic, then routes + policies
-kubectl -n apisix get pods,pdb,hpa
+YES=1 scripts/install.sh   # without YES=1 it shows a helm diff and asks (if helm-diff is installed)
+kubectl -n apisix get pods,hpa,pdb,svc
 kubectl -n sample-app get apisixroute,apisixglobalrule
-kubectl -n apisix logs deploy/apisix-ingress-controller -c manager | tail   # look for sync errors
+kubectl -n sample-app describe apisixroute sample-app | grep -A3 Conditions     # Accepted=True
+kubectl -n apisix logs deploy/apisix-ingress-controller -c manager --since=2m | grep ERROR
+```
+In the first second you may see `dial unix /sockets/adc.sock: no such file`, while the adc sidecar is still starting. Errors after that need a look.
+
+### 5. Test inside the cluster
+`curl` is available in the app's pods (it isn't in the APISIX image). Only read headers, don't write files in the pod:
+```bash
+for p in /api/health /orders-api/health / /some/spa/route; do
+  echo "== $p"; kubectl -n sample-app exec deploy/frontend -- curl -s -o /dev/null -D - "http://apisix-gateway.apisix$p" | grep -iE '^HTTP|^x-request-id'
+done
+# Is NetworkPolicy enforced? A timeout means yes. Any HTTP code (e.g. 404) means no.
+kubectl -n sample-app exec deploy/frontend -- curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 http://apisix-admin.apisix:9180/apisix/admin/routes
 ```
 
-### 4. Test on 8443 (production 443 is untouched)
+### 6. Test on the ELB, port 8443 (production 443 untouched)
 ```bash
-kubectl apply -f k8s/gateway-lb-test.yaml
-# ELB console → listener 8443 → Access Control → whitelist office/VPN IPs
+kubectl apply -f k8s/gateway-lb-test.yaml        # listener is ready in ~30s
 scripts/smoke-test.sh https://<domain>:8443
 ```
-Before the cut-over, also check:
-- **Rate limit**: `for i in $(seq 700); do curl -sk -o /dev/null -w '%{http_code}\n' https://<domain>:8443/api/health; done | sort | uniq -c` should show 429s.
-- **Logs**: JSON access lines show up in LTS with the real `client_ip`.
-- **Load**: `hey -z 60s -c 20 https://<domain>:8443/api/health`. Compare p95 with the same run against `:443` (still nginx).
-- **Pod loss**: delete one `apisix` pod during the load run. You should see no failures apart from in-flight requests.
-- **Rollback drill**: `kubectl delete -f k8s/gateway-lb-test.yaml`, then re-apply it.
-
-### 5. Cut-over (announced window, about 1 min outage)
+Optional: in the ELB console, restrict listener 8443 to office/VPN IPs (Access Control).
+Then check these before cutting over:
 ```bash
-scripts/cutover.sh     # backup → delete frontend LB svc → apply gateway-lb.yaml → smoke test
+U=https://<domain>:8443
+# Rate limit: must show 429s. Needs more than count × replicas requests (600 × 2).
+seq 1600 | xargs -P30 -I{} curl -s -o /dev/null -w '%{http_code}\n' $U/api/health | sort | uniq -c
+# Real client IP: client_ip must be your public IP, not 10.x or 172.16.x
+kubectl -n apisix logs -l app.kubernetes.io/name=apisix --tail=50 | grep '"/api/health"' | tail -2
+# Load + pod loss: kill one APISIX pod while this runs. Expect only 200s. "/" has no rate limit.
+seq 2000 | xargs -P20 -I{} curl -s -o /dev/null -w '%{http_code}\n' $U/ | sort | uniq -c &
+sleep 5; kubectl -n apisix delete $(kubectl -n apisix get pod -l app.kubernetes.io/name=apisix -o name | head -1); wait
+# Metrics: both pods "up" in the CCE Prometheus agent
+kubectl -n sample-app exec deploy/frontend -- curl -s http://prometheus-lightweight.monitoring:9090/api/v1/targets | grep -o '"scrapePool":"apisix[^"]*"[^}]*"health":"[a-z]*"'
 ```
-Then **straight away**, in `sample-project-sky-47-deploy-test/k8s/frontend.yaml`, delete the `frontend` LoadBalancer Service (or turn it into ClusterIP).
-Otherwise the next `kubectl apply -f k8s/` brings back a Service that fights the gateway for listener 443.
-Jenkins only runs `kubectl set image`, so the pipeline itself isn't affected.
+For latency, compare the same `curl -w '%{time_total}'` run against `:443` (nginx) and `:8443`. In-cluster, APISIX adds about 0.6 ms.
+
+### 7. Go live on 443
+**The cluster already has a `frontend` LoadBalancer Service on 443** (migrating an existing setup): plan an announced window, about 1 minute of outage.
+```bash
+YES=1 scripts/cutover.sh   # backup → delete test listener + frontend LB svc → apply gateway-lb.yaml → smoke test (retries)
+```
+The ELB may answer 502 for a few seconds while CCE builds the listener. The script retries for about a minute before it gives up.
+
+**Fresh cluster, nothing on 443 yet:** just switch the test listener to production:
+```bash
+kubectl -n apisix delete svc apisix-gateway-lb && kubectl apply -f k8s/gateway-lb.yaml && scripts/smoke-test.sh
+```
 
 If you need zero downtime, use a second ELB/EIP for `gateway-lb.yaml` and switch DNS (lower the TTL a day ahead).
 
-### Rollback
+### 8. Rollback (any time)
 ```bash
-scripts/rollback.sh    # delete gateway LB svc → re-apply only the Service from sample project frontend.yaml
+scripts/rollback.sh        # delete gateway LB svc → apply k8s/frontend-lb-rollback.yaml (nginx serves 443 again)
 ```
-The gateway pods and routes stay in place, so you can try again later.
+Only Services change. Gateway pods/routes and the app Deployments are untouched. Before cutting over again, run `kubectl -n sample-app delete svc frontend`.
 
-### 6. Hardening (after a stable week)
-- `kubectl apply -f k8s/networkpolicy-sample-app.yaml`, then check that the backend pods stay Ready (probes come from the node).
-- Remove the `/api/` and `/orders-api/` blocks from `frontend/nginx.conf`, then drop the `frontend` entry from that policy.
-- Update the architecture section of the sample project's `K8S-DEPLOYMENT.md`.
-- Add LTS alarms on the access log: `status >= 500` rate, `request_time` p95, and the 429 rate.
+### 9. Afterwards
+- Write a record in `docs/deployments/<cluster>.md`: values used, timings, test results, surprises.
+- Remove admin credentials you uploaded or downloaded for the install: delete the kubeconfig file and revoke it in CCE, and delete or rotate the AK/SK.
+- **Hardening** (after a stable week):
+  - `kubectl apply -f k8s/networkpolicy-sample-app.yaml` (only useful if NetworkPolicy is enforced), then check the backend pods stay Ready.
+  - Remove the `/api/` and `/orders-api/` blocks from the app's `frontend/nginx.conf`. They are only the rollback path. After that, `rollback.sh` serves the SPA but not the APIs.
+  - LTS alarms: `status >= 500` rate, `request_time` p95, 429 rate.
 
-## Deployed state (beta, 2026-10-26)
+## Observing the live gateway
 
-Live on `pk-beta-test-cluster` since 09:30 UTC, serving `https://beta-test.paykoko.pk` (ELB EIP 138.252.175.35).
-Cut-over outage was about 50s. Checks run before and after:
-
-| Check | Result |
+| What | How |
 |---|---|
-| `/api/health`, `/orders-api/health`, `/`, SPA deep link | 200 through APISIX, `X-Request-Id` set |
-| Client IP in access log | Real public IP (X-Forwarded-For trusted from 10.10.0.0/16, 172.16.0.0/16) |
-| Rate limit (600/min per IP per pod) | 429 above the limit, per-route counters |
-| 2000 requests with one APISIX pod deleted | 2000/2000 OK, replacement Ready in ~15s |
-| Latency vs nginx (public) | Same p50/p95. In-cluster overhead ~0.6 ms |
-| Metrics | CCE prometheus agent scrapes both pods (`up`), remote-write to AOM |
+| Live request log (JSON: `client_ip`, `uri`, `status`, `request_time`, `upstream_addr`) | `kubectl -n apisix logs -f -l app.kubernetes.io/name=apisix --max-log-requests 4 \| grep -v /apisix/admin`. Add `\| grep '"status":5'` for errors only |
+| One request end to end | Take `X-Request-Id` from the response header and grep the logs for it |
+| Logs history / search / alarms | LTS → the CCE log stream, filter `apisix` (needs the namespace regex from step 0) |
+| Metrics over time | AOM → Metric Browsing → `apisix_http_status` (by code/route), `apisix_http_latency_bucket`, `apisix_http_requests_total`, `apisix_bandwidth`, `apisix_nginx_http_current_connections`. E.g. 5xx rate: `sum(rate(apisix_http_status{code=~"5.."}[5m])) by (route)` |
+| Raw metrics now | `kubectl -n sample-app exec deploy/frontend -- curl -s http://apisix-prometheus-metrics.apisix:9091/apisix/prometheus/metrics \| grep apisix_http_status` |
+| Config APISIX is running | `kubectl -n apisix port-forward deploy/apisix 9090:9090 &` then `curl -s localhost:9090/v1/routes`, `curl -s localhost:9090/v1/healthcheck` |
+| Route sync status | `kubectl -n sample-app describe apisixroute sample-app`, controller logs `-c manager` |
+| Is a response from APISIX? | Look for an `X-Request-Id` header. The ELB rewrites `Server` to `elb`, so that header proves nothing |
 
-What to know from this cluster:
-- **NetworkPolicy is not enforced** (CNI ignores it): `apisix-admin:9180` is reachable from `sample-app`. The Admin API is protected only by the 64-hex admin key in Secret `apisix-admin`.
-  Keep the policies applied anyway, since they take effect if the network model changes.
-- The ELB rewrites the `Server` header to `elb`. To prove a response came through APISIX, look for `X-Request-Id` instead.
-- A 502 can appear for a few seconds while CCE rebuilds the ELB listener (seen once during cut-over). It isn't an APISIX error: check the APISIX access log.
-- The controller's config pushes (`PUT /apisix/admin/configs` every 10s) show up in the access log. Filter `uri` starting `/apisix/admin` in LTS.
-- The sample project's `k8s/frontend.yaml` still contains the old LoadBalancer Service. **Do not `kubectl apply` it until that Service is removed.**
+There's no dashboard UI: the chart only enables APISIX's built-in UI when etcd is used. AOM (charts) plus LTS (logs) cover it.
+The controller's config push (`PUT /apisix/admin/configs`, every 10s) shows up in the access log, so filter it out.
 
 ## Day-2 operations
 
@@ -145,18 +197,23 @@ Give specific paths a `priority` above 0; the SPA catch-all is `priority: 0`.
 Helm **does not upgrade CRDs**. If the controller version changes, apply the new CRDs first:
 `helm show crds apisix/apisix --version <v> | kubectl apply --server-side -f -`.
 
-**Rotate the Admin key.** Update the `apisix-admin` Secret, then run `kubectl -n apisix rollout restart deploy/apisix deploy/apisix-ingress-controller`.
+**Rotate the Admin key.** Run `kubectl -n apisix delete secret apisix-admin && scripts/create-secrets.sh`, then `kubectl -n apisix rollout restart deploy/apisix deploy/apisix-ingress-controller`.
 
-**Backup / DR.** There's no state to back up. Git (this repo plus the sample project manifests) is the whole configuration, so recovering means running `install.sh` again.
+**Backup / DR.** There's no state to back up. Git (this repo plus the app repo manifests) is the whole configuration, so recovering means steps 2–7 again.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| APISIX pods stuck NotReady | Controller logs (`-c manager`, `-c adc-server`): wrong admin key, NetworkPolicy blocking 9180, or the `apisix-config` GatewayProxy is missing |
+| APISIX pods stuck NotReady | Controller logs (`-c manager`, `-c adc-server`): wrong admin key, Admin API port blocked, or the `apisix-config` GatewayProxy is missing |
 | 404 from APISIX for a path | `kubectl -n sample-app describe apisixroute sample-app` status. Check `ingressClassName: apisix` and the path/priority |
-| 502/504 | Upstream Service/endpoints exist (`kubectl -n sample-app get ep`), and the backend pod is Ready |
+| 502/504 from APISIX | Upstream Service/endpoints exist (`kubectl -n sample-app get ep`), and the pod is Ready. APISIX's access log shows `upstream_status` |
+| 502 for a few seconds right after creating/changing a listener | The ELB is still building it. Retry. If the APISIX access log has no 502, it wasn't APISIX |
 | `ImagePullBackOff` | Images mirrored? `default-secret` present in `apisix`? |
-| Client IP is the node/ELB IP | `realIpFrom` doesn't include the ELB/node subnet |
-| Listener 443 not created after cut-over | The old `frontend` LB Service still exists, or CCE events: `kubectl -n apisix describe svc apisix-gateway-lb` |
-| No gateway logs in LTS | Ingestion namespace regex (prerequisite 5) |
+| `docker push` says `You may not login yet` | No (or expired) SWR login for the Docker user doing the push. Run `swr-login.sh` with the same `DOCKER=` |
+| Client IP is a 10.x/172.16.x address | `realIpFrom` doesn't cover the ELB/node or container range (see preflight) |
+| Rate limit never triggers in tests | It's per pod: send more than `count × replicas` within `time_window` |
+| HPA `cpu: <unknown>` | No metrics API in the cluster (preflight warns). It stays at `minReplicas` |
+| Listener 443 not created / `apply` forbidden (`protocol_port 443 … already … used`) | Another Service still holds 443 on that ELB (`frontend`?). Delete it first. CCE events: `kubectl -n apisix describe svc apisix-gateway-lb` |
+| `kubectl apply` of the app's old `frontend.yaml` fails: `protocol_port 443 … already has been usesd by other service` | Expected: CCE refuses a second Service on 443 of the same ELB, so the gateway keeps traffic. Use the app repo's `feature/apisix-gateway` manifests (no Service) |
+| No gateway logs in LTS | Ingestion namespace regex (step 0) |

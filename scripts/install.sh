@@ -7,9 +7,9 @@ need kubectl; need helm
 
 kubectl apply -f "$ROOT/k8s/namespace.yaml"
 kubectl -n "$NAMESPACE" get secret apisix-admin >/dev/null 2>&1 \
-  || die "Secret apisix-admin missing: create it from k8s/admin-secret.example.yaml first"
+  || die "Secret apisix-admin missing: run scripts/create-secrets.sh first"
 kubectl -n "$NAMESPACE" get secret default-secret >/dev/null 2>&1 \
-  || die "imagePullSecret default-secret missing in $NAMESPACE (copy it from $APP_NAMESPACE)"
+  || die "imagePullSecret default-secret missing in $NAMESPACE: run scripts/create-secrets.sh"
 
 helm repo add apisix "$CHART_REPO" >/dev/null 2>&1 || true
 helm repo update apisix >/dev/null
