@@ -8,7 +8,7 @@ spec:
   hard:
     requests.cpu: "2"
     requests.memory: 4Gi
-    limits.cpu: "4"
+    limits.cpu: "5"            # sum of limits is 4.1 CPU (bursts); requests stay capped at 2
     limits.memory: 7Gi
     requests.storage: 50Gi
     persistentvolumeclaims: "6"

@@ -17,6 +17,9 @@ admin:
   userKey: admin-user
   passwordKey: admin-password
 
+# RWO disk: never run two pods against it during a rollout
+deploymentStrategy:
+  type: Recreate
 persistence:
   enabled: true
   size: 2Gi
@@ -60,7 +63,7 @@ datasources:
       - name: Prometheus
         uid: prometheus
         type: prometheus
-        url: http://prometheus-server.observability.svc
+        url: http://obs-prometheus.observability.svc
         isDefault: true
         editable: false
         jsonData:

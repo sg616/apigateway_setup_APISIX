@@ -23,7 +23,7 @@ tempo:
           endpoint: "0.0.0.0:4318"
   metricsGenerator:
     enabled: true
-    remoteWriteUrl: http://prometheus-server.observability.svc/api/v1/write
+    remoteWriteUrl: http://obs-prometheus.observability.svc/api/v1/write
     storage:
       path: /var/tempo/generator     # on the PVC, not /tmp
   overrides:
