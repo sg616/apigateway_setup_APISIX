@@ -51,6 +51,29 @@ Prerequisites: the gateway is installed (`../README.md`), and you have the clust
 
 Until step 6, open Grafana with `kubectl -n observability port-forward svc/grafana 3000:80`, then http://localhost:3000.
 
+## Dashboards (3 folders, generated from `dashboards/build.py`)
+| Folder | Dashboard | What it answers |
+|---|---|---|
+| Gateway | **Gateway overview** | Is the site OK right now? Traffic, 5xx, 429, p95, error logs, slow traces, pod memory |
+| Gateway | **Gateway SLO** | Are we within target? Availability 1h/1d/7d vs `slo` (99.5%), error budget left, burn rate, p95 vs `slo_p95` (500 ms), per route. Targets are editable variables |
+| Gateway | Apache APISIX (official) | Every `apisix_*` metric (upstream dashboard) |
+| Services | **Services RED** | Per service and endpoint: rate, errors, p50/p95/p99 (from traces), DB query p95 by statement, service graph, error and slow traces |
+| Services | **JVM / Spring Boot** | Heap vs max, memory pools, GC, threads, CPU, HikariCP pool (used/idle/pending, wait time), HTTP server by route |
+| Services | **Logs explorer** | Log volume, ERROR/WARN trend, top error messages, gateway 4xx/5xx by path, top client IPs, slow requests, live logs |
+| Platform | **Kubernetes and node** | Node CPU/memory/disk/network, deployments, pods, restarts, **container memory/CPU % of limit** (shows OOM risk before it happens), throttling |
+| Platform | **Observability stack health** | Scrape targets, Prometheus series, Loki/Tempo ingestion and discards, Alloy drops, PVC usage % |
+
+Change a dashboard by editing `dashboards/build.py`, then `python3 -I observability/dashboards/build.py`.
+Check it with `observability/scripts/verify-dashboards.sh`, which runs **every panel query** against the live stack and fails on errors or unexpected "No data". Then run `install.sh`.
+The UI is read-only on purpose (`allowUiUpdates: false`). To experiment, use **Save as** into your own folder.
+
+Data behind them:
+- JVM metrics come from the Java agent (`OTEL_METRICS_EXPORTER=otlp`) through Prometheus' OTLP receiver (`--web.enable-otlp-receiver`), labelled `service_name`.
+- PVC usage comes from the `kubelet` scrape job (only `kubelet_volume_stats_*` kept).
+- Stack self-metrics come from the `observability` job (Loki, Tempo, Alloy, Grafana; unused `grafana_apiserver_*` series dropped).
+- **SLO note**: route names only exist since 2026-10-26 19:06 UTC (`prefer_name`), so the 7-day numbers fill up over the first week.
+  For production, add recording rules for the SLO ratios.
+
 ## Using it
 - **Dashboards → Gateway → "Gateway overview"**: one screen with:
   - req/s, 5xx share, 429/min and p95
@@ -118,6 +141,7 @@ kubectl delete ns observability && kubectl delete priorityclass observability-lo
 | Alloy ships nothing | On CCE `/var/log/pods` is a symlink to `/var/lib/containerd/container_logs`. Both must be mounted (values/alloy.yaml) |
 | Image push: `does not provide the specified platform` / `content digest … not found` | Docker containerd-store bug with tiny shared layers. `mirror-images.sh` falls back to `scripts/registry-copy.py` |
 | Controller sync errors after adding the plugin | The routes were applied before APISIX restarted with `opentelemetry` in its plugin list (install step 4 order) |
+| Dashboard panel shows "No data" | Run `observability/scripts/verify-dashboards.sh`: it names the panel and the query error |
 | Logs show `trace_id=` empty | That request wasn't sampled (not through APISIX, e.g. a probe). This is expected |
 | `grafana.<domain>` shows the app | The DNS record is missing, or the host doesn't match `routes/grafana.yaml` |
 | 403 on Grafana | Your public IP isn't in the allowlist (`curl ifconfig.me`) |

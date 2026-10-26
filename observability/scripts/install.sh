@@ -13,9 +13,13 @@ helm repo add grafana "$GRAFANA_REPO" >/dev/null 2>&1 || true
 helm repo add prometheus-community "$PC_REPO" >/dev/null 2>&1 || true
 helm repo update grafana-community grafana prometheus-community >/dev/null
 
-# Dashboards: one ConfigMap, mounted read-only by Grafana (allowUiUpdates: false)
-kubectl -n "$OBS_NAMESPACE" create configmap grafana-dashboards-gateway \
-  --from-file="$OBS/dashboards/" --dry-run=client -o yaml | kubectl apply -f -
+# Dashboards: one ConfigMap per folder (dashboards/<folder>/*.json), mounted read-only
+# by Grafana (allowUiUpdates: false). Regenerate the JSON with dashboards/build.py first.
+for dir in "$OBS"/dashboards/*/; do
+  folder=$(basename "$dir")
+  kubectl -n "$OBS_NAMESPACE" create configmap "grafana-dashboards-$folder" \
+    --from-file="$dir" --dry-run=client -o yaml | kubectl apply -f -
+done
 
 up() {  # release chart version
   log "helm $1 ($2 $3)"
