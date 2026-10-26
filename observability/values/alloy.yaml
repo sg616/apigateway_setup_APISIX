@@ -26,6 +26,12 @@ controller:
         hostPath:
           path: /var/lib/alloy-observability
           type: DirectoryOrCreate
+      # On CCE /var/log/pods is a symlink to /var/lib/containerd/container_logs,
+      # so the real directory must be mounted too (read-only, same path).
+      - name: container-logs
+        hostPath:
+          path: /var/lib/containerd/container_logs
+          type: Directory
 
 alloy:
   storagePath: /var/lib/alloy
@@ -34,6 +40,9 @@ alloy:
     extra:
       - name: alloy-data
         mountPath: /var/lib/alloy
+      - name: container-logs
+        mountPath: /var/lib/containerd/container_logs
+        readOnly: true
   resources:
     requests: {cpu: 50m, memory: 128Mi}
     limits: {cpu: 500m, memory: 384Mi}

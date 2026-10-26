@@ -24,6 +24,9 @@ configmapReload:
       limits: {cpu: 50m, memory: 64Mi}
 
 server:
+  # CCE's monitoring add-on already owns ClusterRole/Binding "prometheus-server";
+  # a distinct name avoids taking those over (Service: obs-prometheus).
+  fullnameOverride: obs-prometheus
   image:
     repository: swr.pk-isb-1.sky47.com/pk-beta-repo/prometheus
     tag: v3.15.0
@@ -67,6 +70,10 @@ scrapeConfigs:
       - source_labels: [__meta_kubernetes_service_name]
         regex: apisix-prometheus-metrics
         action: keep
+      # endpointslice SD also yields every other container port of the pod
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: "9091"
+        action: keep
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
   node-exporter:
@@ -86,4 +93,8 @@ scrapeConfigs:
     relabel_configs:
       - source_labels: [__meta_kubernetes_service_name]
         regex: kube-state-metrics-prom
+        action: keep
+      # endpointslice SD also yields every other container port of the pod
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: "8080"
         action: keep
