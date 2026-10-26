@@ -50,6 +50,7 @@ scripts/install.sh                 helm upgrade --install --atomic, routes, poli
 scripts/smoke-test.sh              4 HTTP checks through the gateway
 scripts/cutover.sh / rollback.sh   move public 443 to APISIX / back to nginx
 docs/deployments/                  one record per environment
+docs/lts-alarms.md                 LTS (and AOM) alarm rules for the gateway
 ```
 
 ## Values per environment
@@ -164,13 +165,16 @@ scripts/rollback.sh        # delete gateway LB svc → apply k8s/frontend-lb-rol
 ```
 Only Services change. Gateway pods/routes and the app Deployments are untouched. Before cutting over again, run `kubectl -n sample-app delete svc frontend`.
 
+**The SPA comes back, but not the APIs.** Since the app's nginx dropped its `/api/` and `/orders-api/` proxy blocks (app repo `039ebc2`), nginx serves only static files.
+For a full rollback, also redeploy a frontend image built **before** that change, using Jenkins `ACTION=rollback SERVICES=frontend` or an older `IMAGE_TAG`.
+
 ### 9. Afterwards
 - Write a record in `docs/deployments/<cluster>.md`: values used, timings, test results, surprises.
 - Remove admin credentials you uploaded or downloaded for the install: delete the kubeconfig file and revoke it in CCE, and delete or rotate the AK/SK.
 - **Hardening** (after a stable week):
+  - Remove the `/api/` and `/orders-api/` blocks from the app's `frontend/nginx.conf` and deploy the frontend (done on beta: app repo `039ebc2`). After that, a rollback also needs an older frontend image (step 8).
+  - Create the gateway alarms: [docs/lts-alarms.md](docs/lts-alarms.md) (5xx, slow requests, 429 spike, heartbeat).
   - `kubectl apply -f k8s/networkpolicy-sample-app.yaml` (only useful if NetworkPolicy is enforced), then check the backend pods stay Ready.
-  - Remove the `/api/` and `/orders-api/` blocks from the app's `frontend/nginx.conf`. They are only the rollback path. After that, `rollback.sh` serves the SPA but not the APIs.
-  - LTS alarms: `status >= 500` rate, `request_time` p95, 429 rate.
 
 ## Observing the live gateway
 
@@ -178,8 +182,8 @@ Only Services change. Gateway pods/routes and the app Deployments are untouched.
 |---|---|
 | Live request log (JSON: `client_ip`, `uri`, `status`, `request_time`, `upstream_addr`) | `kubectl -n apisix logs -f -l app.kubernetes.io/name=apisix --max-log-requests 4 \| grep -v /apisix/admin`. Add `\| grep '"status":5'` for errors only |
 | One request end to end | Take `X-Request-Id` from the response header and grep the logs for it |
-| Logs history / search / alarms | LTS → the CCE log stream, filter `apisix` (needs the namespace regex from step 0) |
-| Metrics over time | AOM → Metric Browsing → `apisix_http_status` (by code/route), `apisix_http_latency_bucket`, `apisix_http_requests_total`, `apisix_bandwidth`, `apisix_nginx_http_current_connections`. E.g. 5xx rate: `sum(rate(apisix_http_status{code=~"5.."}[5m])) by (route)` |
+| Logs history / search / alarms | LTS → the CCE log stream, filter `apisix` (needs the namespace regex from step 0). Alarms: [docs/lts-alarms.md](docs/lts-alarms.md) |
+| Metrics over time | AOM → Metric Browsing → `apisix_http_status` (by `code`, `matched_uri`), `apisix_http_latency_bucket`, `apisix_http_requests_total`, `apisix_bandwidth`, `apisix_nginx_http_current_connections`. E.g. 5xx rate per path: `sum(rate(apisix_http_status{code=~"5.."}[5m])) by (matched_uri)` (`route` is an ID hash) |
 | Raw metrics now | `kubectl -n sample-app exec deploy/frontend -- curl -s http://apisix-prometheus-metrics.apisix:9091/apisix/prometheus/metrics \| grep apisix_http_status` |
 | Config APISIX is running | `kubectl -n apisix port-forward deploy/apisix 9090:9090 &` then `curl -s localhost:9090/v1/routes`, `curl -s localhost:9090/v1/healthcheck` |
 | Route sync status | `kubectl -n sample-app describe apisixroute sample-app`, controller logs `-c manager` |

@@ -1,6 +1,6 @@
-# Apply in step 6 (hardening), after a stable week on the gateway.
-# Backends accept traffic only from the gateway (and the frontend nginx,
-# until its /api/ proxy blocks are removed).
+# Hardening step: backends accept traffic only from the APISIX gateway.
+# (The frontend nginx no longer proxies the APIs, so it needs no access.)
+# Only has an effect where the CNI enforces NetworkPolicy (see preflight.sh).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -18,8 +18,5 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: apisix
-        - podSelector:
-            matchLabels:
-              app: frontend
       ports:
         - port: 8080

@@ -55,4 +55,8 @@ APISIX API gateway in front of the sample app, serving **https://beta-test.payko
 - [ ] LTS ingestion namespace regex → `^(sample-app|apisix)$` (console)
 - [ ] Revoke the cluster-admin kubeconfig used for the install (valid until 2031-10-26), and delete/rotate the IAM AK/SK used for the SWR login
 - [ ] Merge this repo's `feat/apisix-gateway-cce` and the app repo's `feature/apisix-gateway`. Then `git pull` in the root-owned checkout `/home/ubuntu/beta-pk/sample-project-sky-47-deploy-test`. Until then, applying that checkout's `k8s/frontend.yaml` fails on its Service (443 taken), so use the new branch
-- [ ] Hardening after a stable week (README step 9)
+- [ ] Hardening (README step 9), started 2026-10-26 at the operator's request:
+  - [x] nginx API proxy blocks removed in the app repo (branch `feature/remove-nginx-api-proxy` @ `039ebc2`)
+  - [ ] merge it, then run Jenkins `deploy`, `REF=origin/main`, `SERVICES=frontend`, and check `scripts/smoke-test.sh` plus the UI
+  - [ ] LTS log structuring + 4 alarms + SMN topic ([docs/lts-alarms.md](../lts-alarms.md))
+  - [ ] skipped: `networkpolicy-sample-app.yaml`, because NetworkPolicy isn't enforced on this cluster
