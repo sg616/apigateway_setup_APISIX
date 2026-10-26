@@ -23,11 +23,12 @@ spec:
       plugins:
         # Network allowlist BEFORE the Grafana login. Public IPs/CIDRs of the
         # office/VPN. 127.0.0.1/32 alone = closed to everyone (use port-forward).
+        # beta: operator office range (2026-10-26)
         - name: ip-restriction
           enable: true
           config:
             whitelist:
-              - 127.0.0.1/32
+              - 14.1.78.0/24
             message: "Access denied"
         - name: limit-count
           enable: true
