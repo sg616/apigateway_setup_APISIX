@@ -99,12 +99,141 @@ apisix:
       accessLog: /dev/stdout
       accessLogFormatEscape: json
       # JSON so LTS can index status / latency fields for alarms
-      accessLogFormat: '{"time":"$time_iso8601","client_ip":"$remote_addr","request_id":"$http_x_request_id","method":"$request_method","host":"$host","uri":"$request_uri","status":$status,"bytes":$body_bytes_sent,"request_time":$request_time,"upstream_addr":"$upstream_addr","upstream_status":"$upstream_status","upstream_time":"$upstream_response_time","user_agent":"$http_user_agent"}'
+      accessLogFormat: '{"time":"$time_iso8601","client_ip":"$remote_addr","request_id":"$http_x_request_id","method":"$request_method","host":"$host","uri":"$request_uri","status":$status,"bytes":$body_bytes_sent,"request_time":$request_time,"upstream_addr":"$upstream_addr","upstream_status":"$upstream_status","upstream_time":"$upstream_response_time","user_agent":"$http_user_agent","path":"$uri","trace_id":"$opentelemetry_trace_id"}'
       errorLog: /dev/stderr
       errorLogLevel: warn
 
   prometheus:
     enabled: true
+
+  # APISIX 3.18 default plugin list (apisix/cli/config.lua, 107 plugins) + opentelemetry,
+  # which ships disabled. Setting this list replaces the default, so keep it complete.
+  plugins:
+    - real-ip
+    - ai
+    - client-control
+    - proxy-buffering
+    - proxy-control
+    - request-id
+    - zipkin
+    - ext-plugin-pre-req
+    - fault-injection
+    - mocking
+    - serverless-pre-function
+    - cors
+    - ip-restriction
+    - ua-restriction
+    - referer-restriction
+    - csrf
+    - uri-blocker
+    - request-validation
+    - chaitin-waf
+    - multi-auth
+    - openid-connect
+    - saml-auth
+    - cas-auth
+    - authz-casbin
+    - authz-casdoor
+    - wolf-rbac
+    - ldap-auth-advanced
+    - ldap-auth
+    - hmac-auth
+    - basic-auth
+    - jwt-auth
+    - jwe-decrypt
+    - key-auth
+    - dingtalk-auth
+    - feishu-auth
+    - acl
+    - consumer-restriction
+    - attach-consumer-label
+    - forward-auth
+    - opa
+    - authz-keycloak
+    - data-mask
+    - proxy-cache
+    - body-transformer
+    - ai-prompt-template
+    - ai-prompt-decorator
+    - ai-prompt-guard
+    - ai-rag
+    - ai-rate-limiting
+    - ai-proxy-multi
+    - ai-proxy
+    - ai-cache
+    - ai-aws-content-moderation
+    - ai-aliyun-content-moderation
+    - ai-lakera-guard
+    - proxy-mirror
+    - graphql-proxy-cache
+    - proxy-rewrite
+    - workflow
+    - api-breaker
+    - graphql-limit-count
+    - limit-conn
+    - limit-count
+    - limit-req
+    - gzip
+    - traffic-label
+    - traffic-split
+    - redirect
+    - response-rewrite
+    - oas-validator
+    - mcp-bridge
+    - degraphql
+    - kafka-proxy
+    - grpc-transcode
+    - grpc-web
+    - http-dubbo
+    - public-api
+    - prometheus
+    - datadog
+    - lago
+    - loki-logger
+    - elasticsearch-logger
+    - echo
+    - loggly
+    - http-logger
+    - splunk-hec-logging
+    - skywalking-logger
+    - google-cloud-logging
+    - sls-logger
+    - tcp-logger
+    - kafka-logger
+    - rocketmq-logger
+    - syslog
+    - udp-logger
+    - file-logger
+    - clickhouse-logger
+    - tencent-cloud-cls
+    - inspect
+    - example-plugin
+    - aws-lambda
+    - azure-functions
+    - openwhisk
+    - openfunction
+    - serverless-post-function
+    - ext-plugin-post-req
+    - ext-plugin-post-resp
+    - ai-request-rewrite
+    - opentelemetry
+
+  pluginAttrs:
+    opentelemetry:
+      trace_id_source: random           # X-Request-Id is a UUID, not a valid trace id
+      resource:
+        service.name: apisix
+      collector:
+        address: tempo.observability.svc:4318
+        request_timeout: 3
+        request_headers: {}
+      batch_span_processor:
+        drop_on_queue_full: true        # never let a slow/absent Tempo hold requests
+        max_queue_size: 2048
+        batch_timeout: 2
+        inactive_timeout: 1
+        max_export_batch_size: 64
+      set_ngx_var: true                 # exposes $opentelemetry_trace_id to the access log
 
 # --- ingress controller (subchart, controller 2.2.0) ------------------------
 ingress-controller:

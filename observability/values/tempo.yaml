@@ -1,0 +1,38 @@
+# grafana-community/tempo 3.1.0: single binary, local storage (EVS), 7 days.
+# Receives OTLP from APISIX and the backends' Java agent. metrics-generator
+# turns spans into RED metrics + service graph in Prometheus.
+tempo:
+  registry: swr.pk-isb-1.sky47.com
+  repository: pk-beta-repo/tempo
+  tag: 3.1.0
+  pullSecrets:
+    - default-secret
+  reportingEnabled: false
+  retention: 168h
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1536Mi}
+  # We send OTLP only. The chart's Jaeger receiver defaults stay, because its
+  # Service template needs them (internal ClusterIP ports, unused).
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+  metricsGenerator:
+    enabled: true
+    remoteWriteUrl: http://prometheus-server.observability.svc/api/v1/write
+    storage:
+      path: /var/tempo/generator     # on the PVC, not /tmp
+  overrides:
+    defaults:
+      metrics_generator:
+        processors: [service-graphs, span-metrics]
+
+priorityClassName: observability-low
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClassName: csi-disk-topology

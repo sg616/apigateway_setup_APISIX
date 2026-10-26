@@ -1,0 +1,121 @@
+# grafana-community/grafana 13.5.0. Datasources and dashboards come from git
+# (read-only in the UI). Login only: no anonymous access, no sign-up.
+image:
+  registry: swr.pk-isb-1.sky47.com
+  repository: pk-beta-repo/grafana
+  tag: 13.2.3-distroless
+  pullSecrets:
+    - default-secret
+
+priorityClassName: observability-low
+resources:
+  requests: {cpu: 100m, memory: 192Mi}
+  limits: {cpu: 500m, memory: 512Mi}
+
+admin:
+  existingSecret: grafana-admin       # created by observability/scripts/secrets.sh
+  userKey: admin-user
+  passwordKey: admin-password
+
+persistence:
+  enabled: true
+  size: 2Gi
+  storageClassName: csi-disk-topology
+initChownData:
+  enabled: false                      # fsGroup handles volume ownership
+testFramework:
+  enabled: false
+
+service:
+  type: ClusterIP
+  port: 80
+
+grafana.ini:
+  server:
+    root_url: https://grafana.paykoko.pk/
+  auth.anonymous:
+    enabled: false
+  users:
+    allow_sign_up: false
+    allow_org_create: false
+    auto_assign_org_role: Viewer
+  security:
+    cookie_secure: true
+    cookie_samesite: lax
+    disable_gravatar: true
+    strict_transport_security: true
+  analytics:
+    reporting_enabled: false
+    check_for_updates: false
+    check_for_plugin_updates: false
+  news:
+    news_feed_enabled: false
+  log:
+    mode: console
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        url: http://prometheus-server.observability.svc
+        isDefault: true
+        editable: false
+        jsonData:
+          timeInterval: 30s
+      - name: Loki
+        uid: loki
+        type: loki
+        url: http://loki.observability.svc:3100
+        editable: false
+        jsonData:
+          maxLines: 1000
+          derivedFields:
+            # APISIX JSON access log
+            - name: TraceID
+              matcherType: regex
+              matcherRegex: '"trace_id":"([0-9a-f]{32})"'
+              datasourceUid: tempo
+              url: "$${__value.raw}"
+            # Spring Boot log level pattern: "INFO [trace_id=...]"
+            - name: TraceID
+              matcherType: regex
+              matcherRegex: 'trace_id=([0-9a-f]{32})'
+              datasourceUid: tempo
+              url: "$${__value.raw}"
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        url: http://tempo.observability.svc:3200
+        editable: false
+        jsonData:
+          nodeGraph:
+            enabled: true
+          serviceMap:
+            datasourceUid: prometheus
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: "-5m"
+            spanEndTimeShift: "5m"
+            customQuery: true
+            query: '{namespace=~"sample-app|apisix"} |= "$${__trace.traceId}"'
+          tracesToMetrics:
+            datasourceUid: prometheus
+          lokiSearch:
+            datasourceUid: loki
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: gateway
+        folder: Gateway
+        type: file
+        disableDeletion: true
+        allowUiUpdates: false
+        options:
+          path: /var/lib/grafana/dashboards/gateway
+dashboardsConfigMaps:
+  gateway: grafana-dashboards-gateway   # created by observability/scripts/install.sh from dashboards/*.json

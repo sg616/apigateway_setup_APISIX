@@ -1,0 +1,40 @@
+# Public Grafana at https://grafana.paykoko.pk (ELB cert *.paykoko.pk covers it).
+# Host-matched routes win over the host-less sample-app routes (router
+# radixtree_host_uri), so grafana.paykoko.pk/api/* goes to Grafana, not the backend.
+apiVersion: apisix.apache.org/v2
+kind: ApisixRoute
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  ingressClassName: apisix
+  http:
+    - name: grafana
+      priority: 20
+      websocket: true                  # Grafana Live
+      match:
+        hosts:
+          - grafana.paykoko.pk
+        paths:
+          - /*
+      backends:
+        - serviceName: grafana
+          servicePort: 80
+      plugins:
+        # Network allowlist BEFORE the Grafana login. Public IPs/CIDRs of the
+        # office/VPN. 127.0.0.1/32 alone = closed to everyone (use port-forward).
+        - name: ip-restriction
+          enable: true
+          config:
+            whitelist:
+              - 127.0.0.1/32
+            message: "Access denied"
+        - name: limit-count
+          enable: true
+          config:
+            count: 600
+            time_window: 60
+            key_type: var
+            key: remote_addr
+            rejected_code: 429
+            policy: local
