@@ -74,7 +74,8 @@ spec:
         include_in_response: true
     - name: prometheus
       enable: true
-      config: {}
+      config:
+        prefer_name: true    # label metrics with route/service names, not the controller's hash IDs
     # Traces to Tempo (collector in helm/values-sky47.yaml pluginAttrs). Beta samples
     # everything; for production use {name: trace_id_ratio, options: {fraction: 0.1}}.
     - name: opentelemetry

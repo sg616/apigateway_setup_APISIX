@@ -73,6 +73,10 @@ Until step 6, open Grafana with `kubectl -n observability port-forward svc/grafa
   ```
 
 ## Configuration notes
+- **Metric labels use names**: the global rule's `prometheus` plugin has `prefer_name: true`, so the `route` label is the rule name, for example
+  `sample-app_sample-app_catalog-api` (`<namespace>_<ApisixRoute>_<rule name>`), instead of the controller's hash ID.
+  The `service` label is `<namespace>_<ApisixRoute>_<rule index>` (0 = first rule), because ApisixRoute v2 can't name it, so filter on `route`.
+  Series from before the change (hash IDs) age out with the 7-day retention.
 - **Sampling**: APISIX samples every request on beta (`routes/sample-app.yaml`, `sampler: always_on`).
   For production use `{name: trace_id_ratio, options: {fraction: 0.1}}`. The backends follow the gateway's decision (`parentbased_always_off`).
 - **Exporters never block traffic**: APISIX uses `drop_on_queue_full: true`, and the Java agent exports asynchronously with a bounded queue.
