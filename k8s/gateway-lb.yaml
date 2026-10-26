@@ -1,0 +1,24 @@
+# Phase 2 (production): gateway takes HTTPS 443 on the shared ELB.
+# Applied by scripts/cutover.sh AFTER the frontend LoadBalancer Service is deleted
+# (two Services cannot hold the same listener port on one ELB).
+apiVersion: v1
+kind: Service
+metadata:
+  name: apisix-gateway-lb
+  namespace: apisix
+  annotations:
+    kubernetes.io/elb.id: a168acbd-ad28-4c82-a57d-7229be2b7da8
+    kubernetes.io/elb.class: union
+    kubernetes.io/elb.autoset: "true"
+    kubernetes.io/elb.cert-id: "fb0464e7b74948d6a3223f05eafbd311"
+    kubernetes.io/elb.tls-ciphers-policy: tls-1-2
+    kubernetes.io/elb.protocol-port: "https:443"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix
+  ports:
+    - name: https
+      port: 443
+      targetPort: 9080

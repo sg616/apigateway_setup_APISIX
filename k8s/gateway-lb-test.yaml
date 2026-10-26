@@ -1,0 +1,24 @@
+# Phase 1 (test): gateway on the SAME shared ELB, HTTPS 8443, same cert.
+# Restrict 8443 with an ELB access-control whitelist (office/VPN IPs) in the console.
+# Production traffic on 443 still goes to the frontend Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: apisix-gateway-lb
+  namespace: apisix
+  annotations:
+    kubernetes.io/elb.id: a168acbd-ad28-4c82-a57d-7229be2b7da8
+    kubernetes.io/elb.class: union
+    kubernetes.io/elb.autoset: "true"
+    kubernetes.io/elb.cert-id: "fb0464e7b74948d6a3223f05eafbd311"
+    kubernetes.io/elb.tls-ciphers-policy: tls-1-2
+    kubernetes.io/elb.protocol-port: "https:8443"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/instance: apisix
+  ports:
+    - name: https
+      port: 8443
+      targetPort: 9080

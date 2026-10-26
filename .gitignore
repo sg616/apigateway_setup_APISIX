@@ -1,0 +1,4 @@
+# Real secrets stay local
+k8s/admin-secret.yaml
+# Service snapshots taken by scripts/cutover.sh
+backup/
