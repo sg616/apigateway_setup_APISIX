@@ -51,7 +51,7 @@ Run everything with the **cluster-admin (console) kubeconfig**. Installing creat
 1. Install `helm` v3 (and optionally the `helm-diff` plugin) on the admin host.
 2. Set `PUBLIC_URL` in `config.env`.
 3. Confirm the VPC CIDR and narrow `realIpFrom` in `helm/values-sky47.yaml` if it is narrower than `10.0.0.0/8`.
-4. Check the cluster's **network model** (CCE → cluster → Overview). NetworkPolicy works only with the *container tunnel* model. On *VPC network* clusters the policies are accepted but silently do nothing.
+4. Check the cluster's **network model** (CCE → cluster → Overview). NetworkPolicy works only with the *container tunnel* model. On *VPC network* clusters the policies are accepted but silently do nothing (this is the case on the beta cluster, see Deployed state).
 5. **LTS**: edit the CCE ingestion config and change the namespace regex from `^sample-app$` to `^(sample-app|apisix)$`, or the gateway logs never reach LTS.
 
 ### 1. Mirror images to SWR
@@ -113,6 +113,28 @@ The gateway pods and routes stay in place, so you can try again later.
 - Remove the `/api/` and `/orders-api/` blocks from `frontend/nginx.conf`, then drop the `frontend` entry from that policy.
 - Update the architecture section of the sample project's `K8S-DEPLOYMENT.md`.
 - Add LTS alarms on the access log: `status >= 500` rate, `request_time` p95, and the 429 rate.
+
+## Deployed state (beta, 2026-10-26)
+
+Live on `pk-beta-test-cluster` since 09:30 UTC, serving `https://beta-test.paykoko.pk` (ELB EIP 138.252.175.35).
+Cut-over outage was about 50s. Checks run before and after:
+
+| Check | Result |
+|---|---|
+| `/api/health`, `/orders-api/health`, `/`, SPA deep link | 200 through APISIX, `X-Request-Id` set |
+| Client IP in access log | Real public IP (X-Forwarded-For trusted from 10.10.0.0/16, 172.16.0.0/16) |
+| Rate limit (600/min per IP per pod) | 429 above the limit, per-route counters |
+| 2000 requests with one APISIX pod deleted | 2000/2000 OK, replacement Ready in ~15s |
+| Latency vs nginx (public) | Same p50/p95. In-cluster overhead ~0.6 ms |
+| Metrics | CCE prometheus agent scrapes both pods (`up`), remote-write to AOM |
+
+What to know from this cluster:
+- **NetworkPolicy is not enforced** (CNI ignores it): `apisix-admin:9180` is reachable from `sample-app`. The Admin API is protected only by the 64-hex admin key in Secret `apisix-admin`.
+  Keep the policies applied anyway, since they take effect if the network model changes.
+- The ELB rewrites the `Server` header to `elb`. To prove a response came through APISIX, look for `X-Request-Id` instead.
+- A 502 can appear for a few seconds while CCE rebuilds the ELB listener (seen once during cut-over). It isn't an APISIX error: check the APISIX access log.
+- The controller's config pushes (`PUT /apisix/admin/configs` every 10s) show up in the access log. Filter `uri` starting `/apisix/admin` in LTS.
+- The sample project's `k8s/frontend.yaml` still contains the old LoadBalancer Service. **Do not `kubectl apply` it until that Service is removed.**
 
 ## Day-2 operations
 
