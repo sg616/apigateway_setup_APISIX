@@ -62,7 +62,8 @@ Until step 6, open Grafana with `kubectl -n observability port-forward svc/grafa
 - **"Apache APISIX (official)"**: the upstream APISIX dashboard (all `apisix_*` metrics).
 - **Log → trace**: in any Loki log line with a `trace_id` (APISIX JSON log, or `[trace_id=…]` in Spring Boot lines), click **TraceID**.
 - **Trace → logs**: in a trace, click **Logs for this span**. It runs `{namespace=~"sample-app|apisix"} |= "<trace id>"`.
-- **Service graph**: Explore → Tempo → Service Graph shows APISIX → backend / orders-backend → MySQL.
+- **Service graph**: Explore → Tempo → Service Graph shows user → apisix and backend / orders-backend → MySQL.
+  There's no apisix → backend edge, because APISIX emits only a SERVER span. The traces themselves still link gateway and backend spans.
 - Explore queries worth keeping:
   ```
   {namespace="apisix", container="apisix"} | json | status >= 500
@@ -108,6 +109,10 @@ kubectl delete ns observability && kubectl delete priorityclass observability-lo
 | PVC `Pending` | StorageClass `csi-disk-topology` binds when the pod is scheduled. `kubectl describe pvc` shows EVS errors |
 | No logs in Loki | `kubectl -n observability logs ds/alloy`. Check the paths under `/var/log/pods` and the `HOSTNAME` node filter |
 | No traces | APISIX: `kubectl -n apisix logs deploy/apisix \| grep -i opentelemetry`. Tempo: `kubectl -n observability logs sts/tempo`. Backends: look for the agent's startup line `opentelemetry-javaagent` |
+| APISIX logs `plugin_metadata is required for opentelemetry` | Collector settings must be plugin **metadata** in APISIX 3.18 (GatewayProxy `pluginMetadata` in `helm/values-sky47.yaml`), not `plugin_attr` |
+| `ClusterRole "prometheus-server" exists and cannot be imported` | CCE's monitoring add-on owns that name. Our release uses `server.fullnameOverride: obs-prometheus` |
+| Alloy ships nothing | On CCE `/var/log/pods` is a symlink to `/var/lib/containerd/container_logs`. Both must be mounted (values/alloy.yaml) |
+| Image push: `does not provide the specified platform` / `content digest … not found` | Docker containerd-store bug with tiny shared layers. `mirror-images.sh` falls back to `scripts/registry-copy.py` |
 | Controller sync errors after adding the plugin | The routes were applied before APISIX restarted with `opentelemetry` in its plugin list (install step 4 order) |
 | Logs show `trace_id=` empty | That request wasn't sampled (not through APISIX, e.g. a probe). This is expected |
 | `grafana.<domain>` shows the app | The DNS record is missing, or the host doesn't match `routes/grafana.yaml` |
