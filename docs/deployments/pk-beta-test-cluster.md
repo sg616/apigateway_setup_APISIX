@@ -89,3 +89,7 @@ Open items:
 - [ ] AOM self-monitoring alarms (`docs/lts-alarms.md`, last section)
 - [ ] Revoke the cluster-admin kubeconfig and the AK/SK used today, and delete the uploaded files
 
+### 2026-10-26 18:5x: Grafana OOMKilled
+3 restarts with exit 137 at the 512Mi limit while the operator was using it. Grafana 13 runs each datasource plugin as its own process, ~470Mi in normal use.
+Raised to request 512Mi / limit 1536Mi, plus `GOMEMLIMIT=1200MiB`. Disk was not the cause (1.7MB of 1.9GB used), so it stays 2Gi.
+

@@ -8,9 +8,13 @@ image:
     - default-secret
 
 priorityClassName: observability-low
+# Grafana 13 runs each datasource plugin (loki, prometheus, tempo, ...) as its own
+# process: ~470Mi in normal use on beta. 512Mi limit was OOMKilled 3x on 2026-10-26.
 resources:
-  requests: {cpu: 100m, memory: 192Mi}
-  limits: {cpu: 500m, memory: 512Mi}
+  requests: {cpu: 100m, memory: 512Mi}
+  limits: {cpu: 500m, memory: 1536Mi}
+env:
+  GOMEMLIMIT: 1200MiB               # Go GC works to stay below this, well under the limit
 
 admin:
   existingSecret: grafana-admin       # created by observability/scripts/secrets.sh
