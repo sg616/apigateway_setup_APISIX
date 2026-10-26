@@ -53,6 +53,10 @@ grafana.ini:
     check_for_plugin_updates: false
   news:
     news_feed_enabled: false
+  plugins:
+    # Don't fetch Grafana's "preinstalled" app plugins from grafana.com at start
+    # (not needed here, and only produced errors)
+    preinstall_disabled: true
   log:
     mode: console
 
