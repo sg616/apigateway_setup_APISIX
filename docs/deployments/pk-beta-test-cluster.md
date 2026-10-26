@@ -93,3 +93,15 @@ Open items:
 3 restarts with exit 137 at the 512Mi limit while the operator was using it. Grafana 13 runs each datasource plugin as its own process, ~470Mi in normal use.
 Raised to request 512Mi / limit 1536Mi, plus `GOMEMLIMIT=1200MiB`. Disk was not the cause (1.7MB of 1.9GB used), so it stays 2Gi.
 
+### 2026-10-26 19:10–19:30: 6 more dashboards (8 in 3 folders)
+- Prometheus: OTLP receiver on, `observability` and `kubelet` jobs added (11 targets up). Head series went from 13.8k to 25.6k, mostly Grafana internals. The unused ones are now dropped. Prometheus memory 114Mi.
+- Backends: Java agent metrics export on, through instrument.sh (orders, then backend; ~51s each, 0 restarts, images unchanged). 152 series per service.
+- `verify-dashboards.py`: 107 panel queries. The first run found 4 problems, all fixed:
+  - APISIX non-JSON log lines broke `| json` aggregations
+  - the latency bucket label is `le="500.0"`
+  - a "down" series was empty when nothing was down
+  - one panel is legitimately empty
+  Final run: **all pass**.
+- In the last hour the 5xx were only on `grafana.paykoko.pk`, during the Grafana OOM window. App routes had none.
+- Script fix: instrument.sh now checks the newest pod (it used to read the logs of a pod that was still terminating).
+

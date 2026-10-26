@@ -36,6 +36,7 @@ server:
   extraFlags:
     - web.enable-lifecycle
     - web.enable-remote-write-receiver   # Tempo metrics-generator pushes here
+    - web.enable-otlp-receiver           # backends' Java agent pushes JVM/HTTP metrics (OTLP)
   global:
     scrape_interval: 30s
     evaluation_interval: 30s
@@ -48,6 +49,19 @@ server:
     limits: {cpu: "1", memory: 1536Mi}
   service:
     type: ClusterIP
+
+# OTLP metrics (Java agent): keep these resource attributes as labels
+serverFiles:
+  prometheus.yml:
+    rule_files:
+      - /etc/config/recording_rules.yml
+      - /etc/config/alerting_rules.yml
+      - /etc/config/rules
+      - /etc/config/alerts
+    otlp:
+      promote_resource_attributes:
+        - service.name
+        - k8s.namespace.name
 
 # Only these jobs. The chart's generic ones are switched off.
 scrapeConfigs:
@@ -98,3 +112,39 @@ scrapeConfigs:
       - source_labels: [__meta_kubernetes_pod_container_port_number]
         regex: "8080"
         action: keep
+  # Self-metrics of the stack (dashboard "Observability stack health")
+  observability:
+    kubernetes_sd_configs:
+      - role: endpointslice
+        namespaces: {names: [observability]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_pod_container_port_number]
+        regex: "loki;3100|tempo;3200|alloy;12345|grafana;3000"
+        action: keep
+      - source_labels: [__meta_kubernetes_service_name]
+        target_label: component
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+    metric_relabel_configs:
+      # Grafana internals no dashboard uses (~1.8k series)
+      - source_labels: [__name__]
+        regex: grafana_apiserver_.*|grafana_feature_toggles_info
+        action: drop
+  # PVC usage. Kubelet scraped directly like the cadvisor job; only volume stats kept.
+  kubelet:
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      insecure_skip_verify: true
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    metrics_path: /metrics
+    kubernetes_sd_configs:
+      - role: node
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: node
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: kubelet_volume_stats_.*
+        action: keep
+

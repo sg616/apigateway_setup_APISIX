@@ -17,7 +17,9 @@ took=$((SECONDS-start))
 
 after_img=$(kubectl -n "$APP_NAMESPACE" get deploy "$SVC" -o jsonpath='{.spec.template.spec.containers[0].image}')
 [[ $before_img == "$after_img" ]] || die "image changed ($before_img -> $after_img)?!"
-pod=$(kubectl -n "$APP_NAMESPACE" get pod -l app="$SVC" --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+# newest pod (an old one can still be Running while it terminates)
+pod=$(kubectl -n "$APP_NAMESPACE" get pod -l app="$SVC" --field-selector=status.phase=Running \
+  --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
 restarts=$(kubectl -n "$APP_NAMESPACE" get pod "$pod" -o jsonpath='{.status.containerStatuses[0].restartCount}')
 agent=$(kubectl -n "$APP_NAMESPACE" logs "$pod" -c "$SVC" | grep -m1 -i "opentelemetry-javaagent" || true)
 log "$SVC: rollout ${took}s, restarts=$restarts, image unchanged"

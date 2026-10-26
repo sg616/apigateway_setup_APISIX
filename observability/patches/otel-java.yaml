@@ -41,8 +41,15 @@ spec:
               value: "parentbased_always_off"
             - name: OTEL_PROPAGATORS
               value: "tracecontext,baggage"
+            # JVM / HTTP / DB-pool metrics -> Prometheus OTLP receiver (traces still go to Tempo)
             - name: OTEL_METRICS_EXPORTER
-              value: "none"
+              value: "otlp"
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: "http://obs-prometheus.observability.svc/api/v1/otlp/v1/metrics"
+            - name: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
+              value: "http/protobuf"
+            - name: OTEL_METRIC_EXPORT_INTERVAL
+              value: "30000"
             - name: OTEL_LOGS_EXPORTER
               value: "none"
             # Spring Boot prints the agent's MDC trace id: "INFO [trace_id=...]"
