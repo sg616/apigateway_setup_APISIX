@@ -1,0 +1,77 @@
+# Gateway routes for the sample app. Replaces the /api/ and /orders-api/
+# proxy blocks in sample-project-sky-47-deploy-test/frontend/nginx.conf.
+apiVersion: apisix.apache.org/v2
+kind: ApisixRoute
+metadata:
+  name: sample-app
+  namespace: sample-app
+spec:
+  ingressClassName: apisix
+  http:
+    # Catalog backend. Path kept as-is (controllers are mapped under /api).
+    - name: catalog-api
+      priority: 10
+      match:
+        paths:
+          - /api/*
+      backends:
+        - serviceName: backend
+          servicePort: 8080
+      plugins:
+        - name: limit-count
+          enable: true
+          config:
+            count: 600
+            time_window: 60
+            key_type: var
+            key: remote_addr
+            rejected_code: 429
+            policy: local   # per APISIX pod: effective limit = count x replicas
+
+    # Orders backend. Path kept: Spring context-path is /orders-api.
+    - name: orders-api
+      priority: 10
+      match:
+        paths:
+          - /orders-api/*
+      backends:
+        - serviceName: orders-backend
+          servicePort: 8080
+      plugins:
+        - name: limit-count
+          enable: true
+          config:
+            count: 600
+            time_window: 60
+            key_type: var
+            key: remote_addr
+            rejected_code: 429
+            policy: local
+
+    # SPA (nginx). Lowest priority catch-all. Uses frontend-internal
+    # (k8s/frontend-internal.yaml), not the ELB-bound frontend Service.
+    - name: frontend
+      priority: 0
+      match:
+        paths:
+          - /*
+      backends:
+        - serviceName: frontend-internal
+          servicePort: 80
+---
+apiVersion: apisix.apache.org/v2
+kind: ApisixGlobalRule
+metadata:
+  name: sample-app-global
+  namespace: sample-app
+spec:
+  ingressClassName: apisix
+  plugins:
+    - name: request-id
+      enable: true
+      config:
+        header_name: X-Request-Id
+        include_in_response: true
+    - name: prometheus
+      enable: true
+      config: {}

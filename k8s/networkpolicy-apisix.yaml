@@ -1,0 +1,29 @@
+# Admin API (9180) and status ports reachable only from inside the
+# apisix namespace (the ingress controller); metrics 9091 also from monitoring.
+# Proxy port 9080 open to the ELB.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apisix-gateway
+  namespace: apisix
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: apisix
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 9080
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 9180
+        - port: 9091
+        - port: 7085
+    # CCE prometheus (ns monitoring) scrapes the metrics port
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 9091

@@ -1,0 +1,153 @@
+# Helm values for chart apisix 2.17.1 on sky47 CCE.
+# Mode: etcd-less. APISIX runs with config_provider=yaml and the ingress
+# controller (2.x, provider apisix-standalone) pushes the full config to every
+# APISIX pod through the Admin API. Source of truth = CRDs in git (routes/).
+
+global:
+  imagePullSecrets:
+    - default-secret
+
+image:
+  repository: swr.pk-isb-1.sky47.com/pk-beta-repo/apisix
+  tag: 3.18.0-ubuntu
+
+# --- availability -----------------------------------------------------------
+replicaCount: 2
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: ""
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+# Soft anti-affinity: spread across nodes when there is more than one
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+              app.kubernetes.io/instance: apisix
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+timezone: Asia/Karachi
+
+# CCE monitoring (prometheus-operator in ns monitoring) selects every
+# ServiceMonitor and remote-writes to AOM, so this puts apisix_* metrics in AOM.
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+
+# --- services ---------------------------------------------------------------
+# Chart Service stays internal. The ELB-facing Service lives in k8s/gateway-lb*.yaml
+# so the cut-over never needs a helm upgrade.
+service:
+  type: ClusterIP
+
+etcd:
+  enabled: false
+# Unused in yaml mode; empty user stops the chart creating an etcd password Secret/env
+externalEtcd:
+  user: ""
+
+apisix:
+  deployment:
+    mode: traditional
+    role: traditional
+    role_traditional:
+      config_provider: yaml
+
+  enableServerTokens: false
+  enableIPv6: false
+
+  admin:
+    enabled: true
+    type: ClusterIP
+    # Key comes from Secret apisix-admin (scripts/create-secrets.sh), never from git
+    credentials:
+      secretName: apisix-admin
+      secretAdminKey: admin-key
+      secretViewerKey: viewer-key
+    # Note: with the ingress controller enabled the chart also adds 0.0.0.0/0 here,
+    # so the real restriction is k8s/networkpolicy-apisix.yaml.
+    allow:
+      ipList:
+        - 127.0.0.1/24
+
+  nginx:
+    http:
+      # ELB (HTTPS listener) adds X-Forwarded-For. Trust only the VPC (nodes,
+      # ELB private IP 10.10.1.229) and the container CIDR (kube-proxy SNAT).
+      realIpHeader: X-Forwarded-For
+      realIpRecursive: "on"
+      realIpFrom:
+        - 127.0.0.1
+        - 10.10.0.0/16
+        - 172.16.0.0/16
+    logs:
+      accessLog: /dev/stdout
+      accessLogFormatEscape: json
+      # JSON so LTS can index status / latency fields for alarms
+      accessLogFormat: '{"time":"$time_iso8601","client_ip":"$remote_addr","request_id":"$http_x_request_id","method":"$request_method","host":"$host","uri":"$request_uri","status":$status,"bytes":$body_bytes_sent,"request_time":$request_time,"upstream_addr":"$upstream_addr","upstream_status":"$upstream_status","upstream_time":"$upstream_response_time","user_agent":"$http_user_agent"}'
+      errorLog: /dev/stderr
+      errorLogLevel: warn
+
+  prometheus:
+    enabled: true
+
+# --- ingress controller (subchart, controller 2.2.0) ------------------------
+ingress-controller:
+  enabled: true
+  deployment:
+    replicas: 1
+    image:
+      repository: swr.pk-isb-1.sky47.com/pk-beta-repo/apisix-ingress-controller
+      tag: "2.2.0"
+    adcContainer:
+      image:
+        repository: swr.pk-isb-1.sky47.com/pk-beta-repo/adc
+        tag: "0.27.1"
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+  config:
+    provider:
+      type: apisix-standalone
+      # A restarted APISIX pod starts empty (readiness /status/ready stays false)
+      # until the next push, so keep this short.
+      syncPeriod: 10s
+    kubernetes:
+      ingressClass: apisix
+      defaultIngressClass: false
+  webhook:
+    enabled: false
+  gatewayProxy:
+    createDefault: true
+    provider:
+      type: ControlPlane
+      controlPlane:
+        service:
+          name: apisix-admin
+          port: 9180
+        auth:
+          type: AdminKey
+          adminKey:
+            valueFrom:
+              secretKeyRef:
+                name: apisix-admin
+                key: admin-key
