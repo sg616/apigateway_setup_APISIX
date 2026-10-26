@@ -89,3 +89,14 @@ sum(increase(apisix_http_status{code="429"}[5m])) >= 200                        
 absent(apisix_node_info) or count(apisix_node_info) < 2                                         # a gateway pod is gone
 ```
 LTS is still where you read the individual requests behind an alarm.
+
+## Watch the observability stack itself (AOM)
+Grafana, Loki, Tempo and Prometheus run in the same single-node cluster, so they can't alert about their own outage.
+These alarms run in AOM, which already receives kube-state-metrics:
+```promql
+sum(increase(kube_pod_container_status_restarts_total{namespace="observability"}[15m])) >= 3      # restart loop
+sum(kube_pod_status_ready{namespace="observability", condition="false"}) > 0                     # a pod not Ready (for 10 min)
+kubelet_volume_stats_available_bytes{namespace="observability"} / kubelet_volume_stats_capacity_bytes{namespace="observability"} < 0.15   # disk almost full
+```
+The disk alarm only works if AOM receives kubelet volume stats. If it doesn't, check `df` in the pods weekly instead.
+

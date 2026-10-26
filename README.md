@@ -51,6 +51,7 @@ scripts/smoke-test.sh              4 HTTP checks through the gateway
 scripts/cutover.sh / rollback.sh   move public 443 to APISIX / back to nginx
 docs/deployments/                  one record per environment
 docs/lts-alarms.md                 LTS (and AOM) alarm rules for the gateway
+observability/                     Grafana + Loki + Tempo + Prometheus + Alloy (one place for logs/traces/metrics)
 ```
 
 ## Values per environment
@@ -189,7 +190,8 @@ For a full rollback, also redeploy a frontend image built **before** that change
 | Route sync status | `kubectl -n sample-app describe apisixroute sample-app`, controller logs `-c manager` |
 | Is a response from APISIX? | Look for an `X-Request-Id` header. The ELB rewrites `Server` to `elb`, so that header proves nothing |
 
-There's no dashboard UI: the chart only enables APISIX's built-in UI when etcd is used. AOM (charts) plus LTS (logs) cover it.
+**One dashboard for logs, traces and metrics:** Grafana at `https://grafana.paykoko.pk`, see [observability/README.md](observability/README.md).
+APISIX's built-in `/ui/` is a config editor and doesn't work in etcd-less mode (its Admin API endpoints return 404).
 The controller's config push (`PUT /apisix/admin/configs`, every 10s) shows up in the access log, so filter it out.
 
 ## Day-2 operations

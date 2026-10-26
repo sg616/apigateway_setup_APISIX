@@ -60,3 +60,48 @@ APISIX API gateway in front of the sample app, serving **https://beta-test.payko
   - [ ] merge it, then run Jenkins `deploy`, `REF=origin/main`, `SERVICES=frontend`, and check `scripts/smoke-test.sh` plus the UI
   - [ ] LTS log structuring + 4 alarms + SMN topic ([docs/lts-alarms.md](../lts-alarms.md))
   - [ ] skipped: `networkpolicy-sample-app.yaml`, because NetworkPolicy isn't enforced on this cluster
+
+## Observability stack (2026-10-26, 18:12–18:45 UTC)
+One Grafana for logs, traces and metrics: `https://grafana.paykoko.pk`, allowlist `14.1.78.0/24` plus login. Branch `feat/observability`.
+How it was done: in one continuous run, with an automatic check after each stage.
+
+| Stage | Result |
+|---|---|
+| Images | 7 images to SWR. Docker's containerd store couldn't push `grafana:*-distroless` or `tempo` (tiny shared layers). Grafana switched to `13.2.3`; tempo, alloy, prometheus, reloader and the Java agent went through `scripts/registry-copy.py` (byte-identical, digests in `observability/config.env`) |
+| Stack | 5 releases. Fixes needed: CCE already owns ClusterRole `prometheus-server` (renamed to `obs-prometheus`); quota `limits.cpu` 4 → 5; Alloy needed `/var/lib/containerd/container_logs` (on CCE `/var/log/pods` is a symlink to it); scrape jobs restricted to the metrics port. Check: all targets up, Loki has every pod's logs |
+| Gateway traces | `opentelemetry` enabled (it ships disabled). **APISIX 3.18 reads the collector settings from plugin metadata**, set through the GatewayProxy `pluginMetadata`. Check: `trace_id` in the access log, spans in Tempo. **Tempo down: 1000/1000 OK, p95 79 → 82 ms** |
+| orders-backend | Java agent 2.32.0 by patch. Rollout 52s, 0 restarts, image unchanged, memory 27% of the limit. Trace: apisix → orders-backend HTTP → repository → JDBC `SELECT ordersdb.orders` |
+| backend | Same: rollout 52s, 0 restarts, memory 27%, traces rooted at apisix |
+| Grafana route | From outside the allowlist, `403 Access denied` on every path (including `/api/*`, so the host route wins over the app routes). Unauthenticated API returns 401. Both dashboards provisioned, 0 errors after disabling plugin preinstall |
+
+Findings:
+- **Someone `kubectl apply`'d the app manifests at 15:53–16:04.** Backends went back to `1.1.0`/`1.0.0`, and DB settings moved to ConfigMap `db-config` (new RDS `10.10.1.184`; 3306 was unreachable until fixed on the RDS side).
+  Jenkins #7 (`deploy-existing main-11bc939-6`) restored the images. The app repo's K8S-DEPLOYMENT.md now warns about this.
+- Kubelet probes create no traces (`parentbased_always_off`): no backend-rooted traces in 15 min.
+- The Tempo service graph shows user → apisix and backends → MySQL, **but not apisix → backends**, because APISIX emits only a SERVER span (no CLIENT span for the upstream).
+  The traces themselves are linked correctly.
+- Grafana with `Recreate` is briefly unavailable on every restart: the operator saw two 502/503s at 18:42:37 during an upgrade.
+- APISIX warns "collector.address with no TLS". This is accepted: in-cluster plain HTTP to Tempo.
+
+Open items:
+- [ ] Merge `feat/observability` (gateway) and `feature/otel-tracing` (app)
+- [ ] Create per-person Grafana accounts. The admin password is in Secret `observability/grafana-admin`
+- [ ] AOM self-monitoring alarms (`docs/lts-alarms.md`, last section)
+- [ ] Revoke the cluster-admin kubeconfig and the AK/SK used today, and delete the uploaded files
+
+### 2026-10-26 18:5x: Grafana OOMKilled
+3 restarts with exit 137 at the 512Mi limit while the operator was using it. Grafana 13 runs each datasource plugin as its own process, ~470Mi in normal use.
+Raised to request 512Mi / limit 1536Mi, plus `GOMEMLIMIT=1200MiB`. Disk was not the cause (1.7MB of 1.9GB used), so it stays 2Gi.
+
+### 2026-10-26 19:10–19:30: 6 more dashboards (8 in 3 folders)
+- Prometheus: OTLP receiver on, `observability` and `kubelet` jobs added (11 targets up). Head series went from 13.8k to 25.6k, mostly Grafana internals. The unused ones are now dropped. Prometheus memory 114Mi.
+- Backends: Java agent metrics export on, through instrument.sh (orders, then backend; ~51s each, 0 restarts, images unchanged). 152 series per service.
+- `verify-dashboards.py`: 107 panel queries. The first run found 4 problems, all fixed:
+  - APISIX non-JSON log lines broke `| json` aggregations
+  - the latency bucket label is `le="500.0"`
+  - a "down" series was empty when nothing was down
+  - one panel is legitimately empty
+  Final run: **all pass**.
+- In the last hour the 5xx were only on `grafana.paykoko.pk`, during the Grafana OOM window. App routes had none.
+- Script fix: instrument.sh now checks the newest pod (it used to read the logs of a pod that was still terminating).
+

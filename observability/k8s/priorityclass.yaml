@@ -1,0 +1,10 @@
+# Observability pods yield to the app under resource pressure (app pods have
+# the default priority 0). Never preempts anything.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: observability-low
+value: -10
+preemptionPolicy: Never
+globalDefault: false
+description: "Monitoring stack: lower than application pods"
