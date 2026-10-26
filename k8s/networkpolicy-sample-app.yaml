@@ -1,0 +1,25 @@
+# Apply in step 6 (hardening), after a stable week on the gateway.
+# Backends accept traffic only from the gateway (and the frontend nginx,
+# until its /api/ proxy blocks are removed).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backends-from-gateway
+  namespace: sample-app
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [backend, orders-backend]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: apisix
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - port: 8080

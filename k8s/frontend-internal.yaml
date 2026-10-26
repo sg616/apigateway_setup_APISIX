@@ -1,0 +1,15 @@
+# Internal Service for the SPA, used by the gateway's catch-all route.
+# Independent of the ELB-bound "frontend" Service so cut-over/rollback
+# never touches the route target.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-internal
+  namespace: sample-app
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80

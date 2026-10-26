@@ -1,0 +1,23 @@
+# ROLLBACK ONLY. The pre-gateway public Service: ELB HTTPS 443 straight to the
+# frontend nginx (which still proxies /api/ and /orders-api/).
+# Applied by scripts/rollback.sh after apisix-gateway-lb has released 443.
+# Keep elb.id / cert-id in sync with gateway-lb.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: sample-app
+  annotations:
+    kubernetes.io/elb.id: a168acbd-ad28-4c82-a57d-7229be2b7da8
+    kubernetes.io/elb.class: union
+    kubernetes.io/elb.autoset: "true"
+    kubernetes.io/elb.protocol-port: "https:443"
+    kubernetes.io/elb.cert-id: "fb0464e7b74948d6a3223f05eafbd311"
+    kubernetes.io/elb.tls-ciphers-policy: tls-1-2
+spec:
+  type: LoadBalancer
+  selector:
+    app: frontend
+  ports:
+    - port: 443
+      targetPort: 80

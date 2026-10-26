@@ -1,0 +1,4 @@
+# Never commit real secrets (create-secrets.sh makes them in-cluster)
+k8s/admin-secret.yaml
+# Service snapshots taken by scripts/cutover.sh
+backup/
