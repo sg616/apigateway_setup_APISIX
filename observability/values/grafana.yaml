@@ -3,7 +3,7 @@
 image:
   registry: swr.pk-isb-1.sky47.com
   repository: pk-beta-repo/grafana
-  tag: 13.2.3-distroless
+  tag: "13.2.3"            # not -distroless: its tiny empty layers fail to push from containerd-store Docker
   pullSecrets:
     - default-secret
 
