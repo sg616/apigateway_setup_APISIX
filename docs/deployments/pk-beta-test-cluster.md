@@ -52,7 +52,7 @@ APISIX API gateway in front of the sample app, serving **https://beta-test.payko
 - The APISIX image has no `curl`. Run in-cluster tests from the app pods instead (read-only, no files written).
 
 ## Open items
-- [ ] LTS ingestion namespace regex → `^(sample-app|apisix)$` (console)
+- [ ] LTS ingestion namespace regex → `^(sample-app|apisix|dev-sky47)$` (console)
 - [ ] Revoke the cluster-admin kubeconfig used for the install (valid until 2031-10-26), and delete/rotate the IAM AK/SK used for the SWR login
 - [ ] Merge this repo's `feat/apisix-gateway-cce` and the app repo's `feature/apisix-gateway`. Then `git pull` in the root-owned checkout `/home/ubuntu/beta-pk/sample-project-sky-47-deploy-test`. Until then, applying that checkout's `k8s/frontend.yaml` fails on its Service (443 taken), so use the new branch
 - [ ] Hardening (README step 9), started 2026-10-26 at the operator's request:

@@ -14,7 +14,7 @@ The thresholds suit beta traffic (thousands of requests/hour). Tune them after a
 Alarm 4 works because the ingress controller pushes config to every APISIX pod every 10s and each push is logged. If those lines stop, either APISIX or the controller is down, or logs aren't arriving.
 
 ## 0. Prerequisites
-1. **Log collection includes the gateway**: LTS → Log Ingestion → your CCE ingestion config → namespace regex `^(sample-app|apisix)$`.
+1. **Log collection includes the gateway**: LTS → Log Ingestion → your CCE ingestion config → namespace regex `^(sample-app|apisix|dev-sky47)$`.
    Check: LTS → Log Management → your stream → search `apisix_` or `"/apisix/admin/configs"` and expect lines from the last minute.
 2. **Notifications**: create an SMN topic with e-mail (or SMS) subscribers, for example `gateway-alarms`, and confirm each subscription from its e-mail.
    In LTS, link it under Alarms → Alarm Action Rules (or pick it directly in each rule).

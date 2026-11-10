@@ -1,5 +1,10 @@
 # Gateway routes for the sample app. Replaces the /api/ and /orders-api/
 # proxy blocks in sample-project-sky-47-deploy-test/frontend/nginx.conf.
+#
+# Every match is scoped with `hosts:`. Without it these routes answer on ANY
+# Host header, and the `priority: 0` /* catch-all below then shadows the routes
+# of every other app on this gateway (e.g. the BPO stack in namespace
+# dev-sky47, whose routes live in bnpl-infrastructure-provisioning-service-pk).
 apiVersion: apisix.apache.org/v2
 kind: ApisixRoute
 metadata:
@@ -12,6 +17,8 @@ spec:
     - name: catalog-api
       priority: 10
       match:
+        hosts:
+          - beta-test.paykoko.pk
         paths:
           - /api/*
       backends:
@@ -32,6 +39,8 @@ spec:
     - name: orders-api
       priority: 10
       match:
+        hosts:
+          - beta-test.paykoko.pk
         paths:
           - /orders-api/*
       backends:
@@ -53,6 +62,8 @@ spec:
     - name: frontend
       priority: 0
       match:
+        hosts:
+          - beta-test.paykoko.pk
         paths:
           - /*
       backends:

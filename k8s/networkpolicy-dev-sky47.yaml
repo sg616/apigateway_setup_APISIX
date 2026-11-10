@@ -1,0 +1,26 @@
+# Hardening step: the BPO services accept traffic only from the APISIX gateway.
+# Mirrors networkpolicy-sample-app.yaml for the dev-sky47 namespace.
+# Only has an effect where the CNI enforces NetworkPolicy (see preflight.sh);
+# on pk-beta-test-cluster it is currently a no-op -- see
+# docs/deployments/pk-beta-test-cluster.md.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bpo-from-gateway
+  namespace: dev-sky47
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [bnpl-bpo-portal, bnpl-bpo-portal-web, bnpl-keycloak]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: apisix
+      ports:
+        - port: 11000   # bnpl-bpo-portal (Spring Boot)
+        - port: 80      # bnpl-bpo-portal-web (nginx)
+        - port: 8080    # bnpl-keycloak

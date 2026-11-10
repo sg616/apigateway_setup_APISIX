@@ -77,7 +77,7 @@ Everything runs from an admin host in the VPC (for example the Jenkins VM) with:
 
 ### 0. Before you start
 1. The app is deployed from the app repo (branch `feature/apisix-gateway` or later): `backend`, `orders-backend` and `frontend` Deployments, plus the `backend` and `orders-backend` Services. Use its `K8S-DEPLOYMENT.md` up to step 7.
-2. **LTS**: in the CCE ingestion config, set the namespace regex to `^(sample-app|apisix)$`. Otherwise the gateway logs never reach LTS.
+2. **LTS**: in the CCE ingestion config, set the namespace regex to `^(sample-app|apisix|dev-sky47)$`. Otherwise the gateway logs never reach LTS.
 3. Point kubectl at the cluster: `export KUBECONFIG=/path/to/cluster-admin-kubeconfig.json`
 
 ### 1. Configure and check
@@ -196,6 +196,11 @@ The controller's config push (`PUT /apisix/admin/configs`, every 10s) shows up i
 
 **Add a route.** Add an `http[]` entry to `routes/*.yaml`, open a PR, and once it's merged run `kubectl apply -f routes/`.
 Give specific paths a `priority` above 0; the SPA catch-all is `priority: 0`.
+
+Always scope a new route with `hosts:`. An unscoped match answers on any Host header, so it can
+shadow another app sharing this gateway. Routes for apps that keep their own manifests are applied
+from those repos, not from `routes/` -- the BPO stack on `dev-sky47` lives in
+`bnpl-infrastructure-provisioning-service-pk/k8-sky47-dev/`.
 
 **Upgrade.** Bump `CHART_VERSION` and the image tags in `config.env` and `values-sky47.yaml`. Read the chart and APISIX changelogs, then run `mirror-images.sh` and `install.sh`.
 Helm **does not upgrade CRDs**. If the controller version changes, apply the new CRDs first:
