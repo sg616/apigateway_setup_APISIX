@@ -1,0 +1,57 @@
+# Strategic-merge patch: OpenTelemetry Java agent for a Spring Boot Deployment.
+# __SERVICE__ = Deployment, container and service name (backend | orders-backend).
+# Applied by observability/scripts/install.sh with `kubectl patch` (never
+# `kubectl apply` of the app manifests: they carry older image tags than Jenkins
+# deployed). The app repo's k8s/*.yaml carry the same fields for new setups.
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: otel-agent
+          image: swr.pk-isb-1.sky47.com/pk-beta-repo/autoinstrumentation-java:2.32.0
+          command: ["cp", "/javaagent.jar", "/otel/javaagent.jar"]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - name: otel-agent
+              mountPath: /otel
+      volumes:
+        - name: otel-agent
+          emptyDir: {}
+      containers:
+        - name: __SERVICE__
+          volumeMounts:
+            - name: otel-agent
+              mountPath: /otel
+              readOnly: true
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-javaagent:/otel/javaagent.jar"
+            - name: OTEL_SERVICE_NAME
+              value: __SERVICE__
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "deployment.environment=beta,k8s.namespace.name=sample-app"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://tempo.observability.svc:4318"
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "http/protobuf"
+            # Only continue traces started by APISIX: kubelet probes etc. are not traced
+            - name: OTEL_TRACES_SAMPLER
+              value: "parentbased_always_off"
+            - name: OTEL_PROPAGATORS
+              value: "tracecontext,baggage"
+            # JVM / HTTP / DB-pool metrics -> Prometheus OTLP receiver (traces still go to Tempo)
+            - name: OTEL_METRICS_EXPORTER
+              value: "otlp"
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: "http://obs-prometheus.observability.svc/api/v1/otlp/v1/metrics"
+            - name: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
+              value: "http/protobuf"
+            - name: OTEL_METRIC_EXPORT_INTERVAL
+              value: "30000"
+            - name: OTEL_LOGS_EXPORTER
+              value: "none"
+            # Spring Boot prints the agent's MDC trace id: "INFO [trace_id=...]"
+            - name: LOGGING_PATTERN_LEVEL
+              value: "%5p [trace_id=%X{trace_id:-}]"
